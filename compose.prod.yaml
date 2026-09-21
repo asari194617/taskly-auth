@@ -1,7 +1,9 @@
 services:
   auth:
     image: ghcr.io/asari194617/taskly-auth:${AUTH_IMAGE_TAG:?set AUTH_IMAGE_TAG to an immutable commit SHA}
-    env_file: .env.production
+    env_file:
+      - path: .env.production
+        format: raw
     environment:
       AUTH_ADDR: 0.0.0.0:3067
       UI_ADDR: 0.0.0.0:3068

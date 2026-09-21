@@ -36,6 +36,12 @@ API は `issuer` が `https://taskly-auth-api.iy0306.com` の JSON、UI は認�
 
 本番 OAuth 設定値は `AUTH_ISSUER=https://taskly-auth-api.iy0306.com`、`AUTH_UI_URL=https://taskly-auth.iy0306.com`、`OAUTH_REDIRECT_URI=https://api.taskly.iy0306.com/auth/oauth/callback`、Taskly 側の `WEB_PUBLIC_URL=https://taskly.iy0306.com` です。Taskly 側の本番環境設定は現行のリポジトリ直下 `.env.production` を暗号化してデプロイする方式であり、`apps/server/.env.production` ではありません。
 
+## 公開前のホスト内検証
+
+`scripts/provision-stage.py` は本番ホストで一度だけ実行し、`taskly_auth` database、同 database にだけ権限を持つ専用ユーザー、mode 0600 の `.env.production` を作ります。`users` テーブルは元DBの構造だけを `CREATE TABLE LIKE` で複製します。既存 Taskly コンテナから TOTP 鍵、SMTP 設定、Discord webhook をプロセス内で引き継ぎ、値を標準出力や Git に出しません。既存の `taskly` database とユーザー行は変更せず、認証行はこの段階ではコピーしません。既存の認証 DB や環境ファイルがあれば実行を拒否します。
+
+`compose.stage.yaml` は GitHub Actions で作成したコミット SHA 固定のイメージを内部 Docker ネットワークだけで動かします。ホストのポートを公開しないため Nginx は 503 のままです。内部の DB 接続、OAuth メタデータ、Discord 通知を検証した後に限り、移行と書き込み所有権の切り替えに進みます。`compose.prod.yaml` に切り替える前に下記の全ゲートを満たす必要があります。
+
 ## 事前確認
 
 1. 本番の暗号鍵 `TOTP_ENC_KEY`、SMTP 設定、Discord webhook を既存の暗号化された本番環境設定から認証サービスの `.env.production` に安全に移します。ログや Git に値を出しません。

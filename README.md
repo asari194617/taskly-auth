@@ -12,6 +12,8 @@ Taskly 用の独立した認証 UI、認証 API、OAuth 2.1 authorization server
 
 `compose.yaml` は開発用です。本番では `compose.prod.yaml` を使い、既存 MySQL 内の別 database `taskly_auth` と専用 DB ユーザーに接続します。認証データのコピーは `cmd/migrate-auth` が担当します。
 
+本番ホストで切り替え前の疎通確認をする場合は `compose.stage.yaml` を使います。Docker の内部ネットワークだけに接続し、ホストのポートは公開しません。公開 Nginx は 503 を維持し、認証データの移行と切り替え条件を満たした後に `compose.prod.yaml` に移ります。
+
 ## 現在の展開制約
 
 このリポジトリは段階導入用です。旧 Taskly 側に残るパスキーは旧 RP ID に結び付いているため、新ドメインでそのまま認証できません。また、プロフィール・パスワード・TOTP・復旧コード等の旧書き込み経路が残る間は二つの DB に差分が生じます。native/public OAuth client と連携ログアウトも未実装です。パスキーの再登録、認証情報更新の所有権移管、増分同期・切り戻し手順の検証が終わるまで、本番ログインの一斉切り替えを行わないでください。
