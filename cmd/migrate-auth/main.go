@@ -1,6 +1,7 @@
 // migrate-auth copies the existing identity rows to an empty, separate MySQL
-// database. Run only while identity writes are paused. It never deletes source
-// rows and refuses to overwrite a non-empty target table.
+// database. Cutover requires paused identity writes; snapshot and verify modes
+// are read-only on the source. It never deletes source rows and refuses to
+// overwrite a non-empty target table.
 package main
 
 import (
@@ -41,8 +42,8 @@ func main() {
 	if mode == "" {
 		mode = "cutover"
 	}
-	if mode != "cutover" && mode != "snapshot" {
-		fail("AUTH_MIGRATION_MODE must be cutover or snapshot")
+	if mode != "cutover" && mode != "snapshot" && mode != "verify" {
+		fail("AUTH_MIGRATION_MODE must be cutover, snapshot, or verify")
 	}
 	if mode == "cutover" && os.Getenv("AUTH_WRITES_PAUSED") != "1" {
 		fail("AUTH_WRITES_PAUSED=1 is required after stopping identity writes")
@@ -51,11 +52,11 @@ func main() {
 	// them into RFC3339 strings that MySQL DATETIME cannot accept on insert.
 	sourceConfig, err := mysql.ParseDSN(sourceDSN)
 	if err != nil {
-		fail("invalid SOURCE_DSN: ", err)
+		fail("invalid SOURCE_DSN")
 	}
 	targetConfig, err := mysql.ParseDSN(targetDSN)
 	if err != nil {
-		fail("invalid TARGET_DSN: ", err)
+		fail("invalid TARGET_DSN")
 	}
 	sourceConfig.ParseTime = false
 	targetConfig.ParseTime = false
@@ -84,6 +85,13 @@ func main() {
 	}
 	if sourceDB == targetDB {
 		fail("source and target database names must differ")
+	}
+	if mode == "verify" {
+		if err := verifyExisting(ctx, source, target); err != nil {
+			fail("read-only identity verification: ", err)
+		}
+		log.Println("read-only identity verification matched; writes were not paused, so this is not a cutover approval")
+		return
 	}
 	var reading sourceReader = source
 	if mode == "snapshot" {
@@ -119,6 +127,42 @@ func main() {
 	} else {
 		log.Println("identity copy verified; old tables remain intact; reconcile writes before switching traffic")
 	}
+}
+
+func verifyExisting(ctx context.Context, source, target *sql.DB) error {
+	// Each database is read through a consistent snapshot. The two snapshots
+	// are not atomic together; a final cutover still requires paused writes.
+	sourceTx, err := source.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return fmt.Errorf("source snapshot: %w", err)
+	}
+	defer sourceTx.Rollback()
+	targetTx, err := target.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return fmt.Errorf("target snapshot: %w", err)
+	}
+	defer targetTx.Rollback()
+	var mismatches []string
+	for _, table := range tables {
+		sCount, sHash, err := fingerprint(ctx, sourceTx, table)
+		if err != nil {
+			return fmt.Errorf("source %s: %w", table, err)
+		}
+		tCount, tHash, err := fingerprint(ctx, targetTx, table)
+		if err != nil {
+			return fmt.Errorf("target %s: %w", table, err)
+		}
+		if sCount != tCount || sHash != tHash {
+			log.Printf("%s: drift source_count=%d target_count=%d", table, sCount, tCount)
+			mismatches = append(mismatches, table)
+		} else {
+			log.Printf("%s: %d rows match", table, sCount)
+		}
+	}
+	if len(mismatches) != 0 {
+		return fmt.Errorf("drift in %s; keep legacy login active and recopy to a fresh rehearsal database", strings.Join(mismatches, ", "))
+	}
+	return nil
 }
 
 func fail(values ...any)                 { notifyFailure(); log.Fatal(values...) }

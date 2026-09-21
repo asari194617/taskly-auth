@@ -65,10 +65,16 @@ DB 接続・スキーマ・設定の起動失敗時は、Discord への送信が
 
 2026-09-21 の本番ホスト上の検証では、`users` 47、`totp_secrets` 1、`recovery_codes` 10、`passkeys` 1、`login_codes` 23、`sessions` 68、`blocks` 2 行をスナップショットからコピーし、7テーブルすべての件数と SHA-256 が一致しました。実行後のユーザー件数は元DB 47、切り替え先 `taskly_auth` 0、検証DB 47 です。元DBは書き込み可能なままで、この検証DBを切り替え先には使いません。
 
+コピー後の差分確認には `AUTH_MIGRATION_MODE=verify` を使います。ソースとターゲットの7テーブルをそれぞれ読み取り専用の一貫したスナップショットで照合し、件数または行ハッシュが異なれば非ゼロで終了してDiscordへ通知します。DBには書き込みません。二つのスナップショットは同時点の原子的な取得ではないため、一致しても本番切り替えの承認にはなりません。差分がある検証DBへ上書きせず、新しい空の検証DBでコピーをやり直します。
+
 ```sh
 python3 provision-rehearsal.py
 docker run --rm --read-only --network infra_default \
   --env-file .env.rehearsal --entrypoint /usr/local/bin/migrate-auth \
+  ghcr.io/asari194617/taskly-auth:<verified-commit-sha>
+docker run --rm --read-only --network infra_default \
+  --env-file .env.rehearsal -e AUTH_MIGRATION_MODE=verify \
+  --entrypoint /usr/local/bin/migrate-auth \
   ghcr.io/asari194617/taskly-auth:<verified-commit-sha>
 ```
 
