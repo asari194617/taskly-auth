@@ -109,6 +109,7 @@ func notifyFailure() {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "TasklyAuth/1.0")
 	resp, err := http.DefaultClient.Do(req)
 	if err == nil {
 		resp.Body.Close()

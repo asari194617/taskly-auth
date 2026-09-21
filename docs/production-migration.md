@@ -42,6 +42,8 @@ API は `issuer` が `https://taskly-auth-api.iy0306.com` の JSON、UI は認�
 
 `compose.stage.yaml` は GitHub Actions で作成したコミット SHA 固定のイメージを内部 Docker ネットワークだけで動かします。手動実行した workflow は同じイメージを 3 日間の非公開 artifact として保存します。これを `gh run download`、SSH 転送、`docker load` で本番ホストに入れます。ホストのポートを公開しないため Nginx は 503 のままです。内部の DB 接続、OAuth メタデータ、Discord 通知を検証した後に限り、移行と書き込み所有権の切り替えに進みます。`compose.prod.yaml` に切り替える前に下記の全ゲートを満たす必要があります。
 
+2026-09-21 に専用 DB と設定ファイルを作成し、内部ステージングコンテナの health check と OAuth メタデータを確認しました。新 DB の `users` は 0 行で、元 DB のユーザー行は変更していません。公開 FQDN は引き続き HTTPS 503 です。Discord webhook の実送信では既定の HTTP クライアント名が 403 となり、`TasklyAuth/1.0` を指定すると 204 で受理されました。通知コードにこのヘッダーを設定しています。
+
 ## 事前確認
 
 1. 本番の暗号鍵 `TOTP_ENC_KEY`、SMTP 設定、Discord webhook を既存の暗号化された本番環境設定から認証サービスの `.env.production` に安全に移します。ログや Git に値を出しません。
