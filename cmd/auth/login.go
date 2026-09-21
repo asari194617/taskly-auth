@@ -262,7 +262,10 @@ func (a *app) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if cookie, err := r.Cookie("taskly_auth_session"); err == nil {
-		_, _ = a.db.ExecContext(r.Context(), `DELETE FROM auth_sessions WHERE token_hash=?`, digest(cookie.Value))
+		if _, err := a.db.ExecContext(r.Context(), `DELETE FROM auth_sessions WHERE token_hash=?`, digest(cookie.Value)); err != nil {
+			oauthError(w, http.StatusServiceUnavailable, "temporarily_unavailable")
+			return
+		}
 	}
 	http.SetCookie(w, &http.Cookie{Name: "taskly_auth_session", Value: "", Path: "/", MaxAge: -1, Secure: a.secure, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	w.WriteHeader(204)

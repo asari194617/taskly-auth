@@ -33,6 +33,51 @@ func (a *app) loginJS(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(loginJavaScript))
 }
 
+var logoutTemplate = template.Must(template.New("logout").Parse(`<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="api-base" content="{{.API}}"><meta name="legacy-login" content="{{.Legacy}}">
+<title>Taskly ログアウト</title>
+<style>body{font:16px system-ui,sans-serif;background:#f6f8fb;color:#17202c;margin:0}main{max-width:420px;margin:8vh auto;padding:28px;background:white;border-radius:12px;box-shadow:0 8px 30px #15243a16}h1{font-size:1.5rem}#error{color:#ad2020;min-height:1.5em}button{font:inherit;background:#185db6;color:white;border:0;border-radius:6px;padding:12px 18px;cursor:pointer}</style>
+</head><body><main><h1>ログアウトしています</h1><p id="error" role="alert"></p><button id="retry" hidden>再試行</button></main><script src="/logout.js" defer></script></body></html>`))
+
+func (a *app) logoutPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src "+a.issuer+"; base-uri 'none'; form-action 'none'")
+	legacy := env("LEGACY_LOGIN_URL", "https://taskly.iy0306.com/login")
+	_ = logoutTemplate.Execute(w, map[string]string{"API": a.issuer, "Legacy": legacy})
+}
+
+func (a *app) logoutJS(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Write([]byte(logoutJavaScript))
+}
+
+const logoutJavaScript = `
+const api = document.querySelector('meta[name="api-base"]').content;
+const target = document.querySelector('meta[name="legacy-login"]').content;
+const error = document.getElementById('error');
+const retry = document.getElementById('retry');
+async function finishLogout() {
+  retry.hidden = true;
+  error.textContent = '';
+  try {
+    const response = await fetch(api + '/auth/logout', {
+      method: 'POST', credentials: 'include', headers: {'X-Auth-UI': '1'}
+    });
+    if (!response.ok) throw new Error('logout failed');
+    location.replace(target);
+  } catch (_) {
+    error.textContent = 'ログアウトを完了できませんでした。再試行してください。';
+    retry.hidden = false;
+  }
+}
+retry.addEventListener('click', finishLogout);
+finishLogout();
+`
+
 const loginJavaScript = `
 const api = document.querySelector('meta[name="api-base"]').content;
 const requestID = new URLSearchParams(location.search).get('request_id');

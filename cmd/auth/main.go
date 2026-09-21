@@ -102,6 +102,8 @@ func main() {
 	ui.HandleFunc("GET /healthz", a.health)
 	ui.HandleFunc("GET /login", a.loginPage)
 	ui.HandleFunc("GET /login.js", a.loginJS)
+	ui.HandleFunc("GET /logout", a.logoutPage)
+	ui.HandleFunc("GET /logout.js", a.logoutJS)
 	ui.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/login", http.StatusFound) })
 	apiServer := &http.Server{Addr: env("AUTH_ADDR", "127.0.0.1:3067"), Handler: a.wrapAPI(api), ReadHeaderTimeout: 5 * time.Second}
 	uiServer := &http.Server{Addr: env("UI_ADDR", "127.0.0.1:3068"), Handler: ui, ReadHeaderTimeout: 5 * time.Second}
