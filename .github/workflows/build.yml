@@ -47,6 +47,11 @@ jobs:
         run: |
           go run ./cmd/seed-dev
           python3 scripts/smoke-dev.py
+      - name: Diagnose failed auth startup
+        if: failure()
+        run: |
+          docker compose ps
+          docker compose logs --no-color --tail=80 auth db
       - name: Stop development auth service
         if: always()
         run: docker compose down -v
