@@ -54,6 +54,10 @@ DB 接続・スキーマ・設定の起動失敗時は、Discord への送信が
 1. 本番の暗号鍵 `TOTP_ENC_KEY`、SMTP 設定、Discord webhook を既存の暗号化された本番環境設定から認証サービスの `.env.production` に安全に移します。ログや Git に値を出しません。
 2. `OAUTH_CLIENT_SECRET` と専用 DB パスワードを新規に作成します。Taskly API と認証サービスのクライアント秘密だけを一致させます。
 3. source `taskly` と target `taskly_auth` をバックアップします。既存バックアップの復元テストを実施します。
+
+現行の Taskly Airflow `backup_mysql` は `MYSQL_DATABASE=taskly` のみを dump し、`taskly_auth` を含みません。認証 DB へ実ユーザーをコピーする前に、認証 DB 専用の暗号化された定期バックアップを構成し、別の MySQL 8.4 環境で SQL を最後まで復元してユーザー件数と OAuth テーブルを照合してください。ファイルの復号や gzip 検査だけでは復元可能とは判定しません。2026-09-21 時点ではこの認証 DB バックアップと復元試験は未実施です。
+
+`scripts/provision-backup.py` は本番ホストで `taskly_auth` の読み取り専用 backup ユーザーと mode 0600 の `.env.backup` を一度だけ作る。既存 Airflow コンテナの MySQL 8.4 `mysqldump`、age recipient、FTPS 資格情報を再利用し、`scripts/run-backup.py` は認証 DB を `/opt/airflow/backups/taskly-auth` へ暗号化してから、既存の非公開 FTPS ディレクトリ内の `taskly-auth` サブディレクトリへ転送・ハッシュ照合する。既存アプリ DB と認証 DB のバックアップ保持・削除を分離するため、両ディレクトリを混ぜない。失敗時は認証サービス用 Discord webhook へ秘密値を含めず通知する。初回手動バックアップが成功した後、ホストの `ubuntu` ユーザーの cron に毎日 03:30 JST の `python3 /home/ubuntu/taskly-auth/scripts/run-backup.py` を登録する。Airflow コンテナが停止している場合はジョブが失敗して通知されるため、復旧後に再実行する。
 4. 新 DB と専用ユーザーを作成します。`taskly_auth` への権限だけを付与します。Taskly の既存 DB ユーザーに認証 DB の権限を付与しません。
 5. 既存ログインを維持した状態で、開発/ステージング環境でコピーと照合を完走します。
 
