@@ -15,8 +15,10 @@ Taskly 用の独立した認証 UI、認証 API、OAuth 2.1 authorization server
 本番ホストで切り替え前の疎通確認をする場合は `compose.stage.yaml` を使います。Docker の内部ネットワークだけに接続し、ホストのポートは公開しません。公開 Nginx は 503 を維持し、認証データの移行と切り替え条件を満たした後に `compose.prod.yaml` に移ります。
 本番モードでは `AUTH_MIGRATION_READY=1` を明示するまで認証・OAuth API は 503 を返します。health と OAuth メタデータだけが使える状態です。
 
+public client は `OAUTH_PUBLIC_CLIENTS_JSON` に `[{"client_id":"taskly-dev","redirect_uri":"http://127.0.0.1/callback"}]` のように登録します。Authorization Code + PKCE S256 を必須とし、token endpoint には `client_id` を送って client secret は送りません。HTTPS の app-claimed URI、逆ドメイン形式の private-use scheme、loopback IP の HTTP URIを受け付けます。loopback IP では登録値と同じホスト・パス・クエリで任意の有効なポートを使えます。本番用の client ID と redirect URI は実際のアプリが確定してから登録してください。リポジトリ内に native アプリ実装はありません。[RFC 8252](https://www.rfc-editor.org/rfc/rfc8252) の redirect URI と PKCE の要件に従います。
+
 ## 現在の展開制約
 
-このリポジトリは段階導入用です。旧 Taskly 側に残るパスキーは旧 RP ID に結び付いているため、新ドメインでそのまま認証できません。また、プロフィール・パスワード・TOTP・復旧コード等の旧書き込み経路が残る間は二つの DB に差分が生じます。`migrate-auth` の `verify` モードは差分を読み取り専用で検出しますが、同期は行いません。native/public OAuth client と連携ログアウトも未実装です。パスキーの再登録、認証情報更新の所有権移管、増分同期・切り戻し手順の検証が終わるまで、本番ログインの一斉切り替えを行わないでください。
+このリポジトリは段階導入用です。旧 Taskly 側に残るパスキーは旧 RP ID に結び付いているため、新ドメインでそのまま認証できません。また、プロフィール・パスワード・TOTP・復旧コード等の旧書き込み経路が残る間は二つの DB に差分が生じます。`migrate-auth` の `verify` モードは差分を読み取り専用で検出しますが、同期は行いません。native アプリとの実機接続と連携ログアウトも未実装です。パスキーの再登録、認証情報更新の所有権移管、増分同期・切り戻し手順の検証が終わるまで、本番ログインの一斉切り替えを行わないでください。
 
 設計と本番手順は [docs/production-migration.md](docs/production-migration.md) を参照してください。

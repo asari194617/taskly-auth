@@ -109,4 +109,53 @@ assert response.status == 200
 response = request(api + "/oauth/introspect", {"token": tokens["access_token"]},
                    {"Authorization": "Basic " + basic})
 assert json.load(response)["active"] is False
+
+public_client_id = os.environ.get("OAUTH_DEV_PUBLIC_CLIENT_ID")
+public_redirect_uri = os.environ.get("OAUTH_DEV_PUBLIC_REDIRECT_URI")
+if public_client_id and public_redirect_uri:
+    public_verifier = secrets.token_urlsafe(32)
+    public_challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(public_verifier.encode()).digest()
+    ).rstrip(b"=").decode()
+    public_state = secrets.token_urlsafe(32)
+    public_params = urllib.parse.urlencode({
+        "response_type": "code", "client_id": public_client_id,
+        "redirect_uri": public_redirect_uri, "scope": "taskly:login",
+        "state": public_state, "code_challenge": public_challenge,
+        "code_challenge_method": "S256",
+    })
+    response = request(api + "/oauth/authorize?" + public_params)
+    assert response.status == 302, response.status
+    public_callback = urllib.parse.urlparse(response.headers["Location"])
+    assert response.headers["Location"].startswith(public_redirect_uri)
+    public_query = urllib.parse.parse_qs(public_callback.query)
+    assert public_query["state"] == [public_state]
+    public_code = public_query["code"][0]
+
+    public_exchange = {
+        "grant_type": "authorization_code", "code": public_code,
+        "redirect_uri": public_redirect_uri, "code_verifier": public_verifier,
+    }
+    assert token_request(public_exchange).status == 400
+    response = request(api + "/oauth/token", {**public_exchange, "client_id": public_client_id})
+    assert response.status == 200, response.read()
+    public_tokens = json.load(response)
+    response = request(api + "/oauth/introspect", {"token": public_tokens["access_token"]},
+                       {"Authorization": "Basic " + basic})
+    introspection = json.load(response)
+    assert introspection["active"] is True
+    assert introspection["client_id"] == public_client_id
+
+    public_refresh = {"grant_type": "refresh_token", "client_id": public_client_id,
+                      "refresh_token": public_tokens["refresh_token"]}
+    assert token_request(public_refresh).status == 401
+    response = request(api + "/oauth/token", public_refresh)
+    assert response.status == 200, response.read()
+    public_rotated = json.load(response)
+    assert request(api + "/oauth/token", public_refresh).status == 400
+    for access_token in (public_tokens["access_token"], public_rotated["access_token"]):
+        response = request(api + "/oauth/introspect", {"token": access_token},
+                           {"Authorization": "Basic " + basic})
+        assert json.load(response)["active"] is False
+
 print("OAuth 2.1 local smoke passed")

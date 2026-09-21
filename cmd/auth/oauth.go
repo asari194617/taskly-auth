@@ -23,6 +23,10 @@ type authorizationRequest struct {
 }
 
 func (a *app) metadata(w http.ResponseWriter, r *http.Request) {
+	authMethods := []string{"client_secret_basic"}
+	if len(a.publicClients) != 0 {
+		authMethods = append(authMethods, "none")
+	}
 	jsonResponse(w, 200, map[string]any{
 		"issuer":                                a.issuer,
 		"authorization_endpoint":                a.issuer + "/oauth/authorize",
@@ -33,7 +37,7 @@ func (a *app) metadata(w http.ResponseWriter, r *http.Request) {
 		"response_types_supported":              []string{"code"},
 		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
 		"code_challenge_methods_supported":      []string{"S256"},
-		"token_endpoint_auth_methods_supported": []string{"client_secret_basic"},
+		"token_endpoint_auth_methods_supported": authMethods,
 	})
 }
 
@@ -42,7 +46,7 @@ func (a *app) authorize(w http.ResponseWriter, r *http.Request) {
 	requestID := r.URL.Query().Get("request_id")
 	if requestID == "" {
 		q := r.URL.Query()
-		if q.Get("client_id") != a.clientID || q.Get("redirect_uri") != a.redirectURI || q.Get("response_type") != "code" || q.Get("code_challenge_method") != "S256" || !challengePattern.MatchString(q.Get("code_challenge")) || len(q.Get("state")) < 16 || len(q.Get("state")) > 1024 || q.Get("scope") != "taskly:login" {
+		if !a.registeredRedirect(q.Get("client_id"), q.Get("redirect_uri")) || q.Get("response_type") != "code" || q.Get("code_challenge_method") != "S256" || !challengePattern.MatchString(q.Get("code_challenge")) || len(q.Get("state")) < 16 || len(q.Get("state")) > 1024 || q.Get("scope") != "taskly:login" {
 			oauthError(w, 400, "invalid_request")
 			return
 		}
@@ -53,7 +57,7 @@ func (a *app) authorize(w http.ResponseWriter, r *http.Request) {
 			a.alerts.send("Taskly auth random generation failed")
 			return
 		}
-		_, err = a.db.ExecContext(ctx, `INSERT INTO oauth_authorization_requests (id_hash,client_id,redirect_uri,state_value,code_challenge,scope_value,expires_at) VALUES (?,?,?,?,?,?,?)`, digest(requestID), a.clientID, a.redirectURI, q.Get("state"), q.Get("code_challenge"), q.Get("scope"), time.Now().UTC().Add(10*time.Minute))
+		_, err = a.db.ExecContext(ctx, `INSERT INTO oauth_authorization_requests (id_hash,client_id,redirect_uri,state_value,code_challenge,scope_value,expires_at) VALUES (?,?,?,?,?,?,?)`, digest(requestID), q.Get("client_id"), q.Get("redirect_uri"), q.Get("state"), q.Get("code_challenge"), q.Get("scope"), time.Now().UTC().Add(10*time.Minute))
 		if err != nil {
 			oauthError(w, 500, "server_error")
 			a.alerts.send("Taskly auth authorization request storage failed")
@@ -66,7 +70,7 @@ func (a *app) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 	var req authorizationRequest
 	err := a.db.QueryRowContext(ctx, `SELECT client_id,redirect_uri,state_value,code_challenge,scope_value,expires_at FROM oauth_authorization_requests WHERE id_hash=?`, digest(requestID)).Scan(&req.clientID, &req.redirectURI, &req.state, &req.challenge, &req.scope, &req.expires)
-	if err != nil || time.Now().UTC().After(req.expires) {
+	if err != nil || time.Now().UTC().After(req.expires) || !a.registeredRedirect(req.clientID, req.redirectURI) {
 		oauthError(w, 400, "invalid_request")
 		return
 	}
@@ -122,26 +126,43 @@ func (a *app) authenticateClient(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (a *app) token(w http.ResponseWriter, r *http.Request) {
-	if !a.authenticateClient(w, r) {
-		return
-	}
 	if err := r.ParseForm(); err != nil {
 		oauthError(w, 400, "invalid_request")
 		return
 	}
+	clientID, ok := a.authenticateTokenClient(w, r)
+	if !ok {
+		return
+	}
 	switch r.Form.Get("grant_type") {
 	case "authorization_code":
-		a.exchangeCode(w, r)
+		a.exchangeCode(w, r, clientID)
 	case "refresh_token":
-		a.refresh(w, r)
+		a.refresh(w, r, clientID)
 	default:
 		oauthError(w, 400, "unsupported_grant_type")
 	}
 }
 
-func (a *app) exchangeCode(w http.ResponseWriter, r *http.Request) {
+func (a *app) authenticateTokenClient(w http.ResponseWriter, r *http.Request) (string, bool) {
+	if id, secret, hasBasic := r.BasicAuth(); hasBasic {
+		if equal(id, a.clientID) && equal(secret, a.clientSecret) && (r.Form.Get("client_id") == "" || r.Form.Get("client_id") == id) {
+			return id, true
+		}
+	} else if r.Header.Get("Authorization") == "" && r.Form.Get("client_secret") == "" {
+		id := r.Form.Get("client_id")
+		if _, registered := a.publicClients[id]; registered {
+			return id, true
+		}
+	}
+	w.Header().Set("WWW-Authenticate", `Basic realm="taskly-auth"`)
+	oauthError(w, 401, "invalid_client")
+	return "", false
+}
+
+func (a *app) exchangeCode(w http.ResponseWriter, r *http.Request, authenticatedClientID string) {
 	code, verifier := r.Form.Get("code"), r.Form.Get("code_verifier")
-	if code == "" || !verifierPattern.MatchString(verifier) || r.Form.Get("redirect_uri") != a.redirectURI {
+	if code == "" || !verifierPattern.MatchString(verifier) || !a.registeredRedirect(authenticatedClientID, r.Form.Get("redirect_uri")) {
 		oauthError(w, 400, "invalid_request")
 		return
 	}
@@ -152,11 +173,11 @@ func (a *app) exchangeCode(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 	var userID uint64
-	var clientID, redirectURI, challenge, scope string
+	var codeClientID, redirectURI, challenge, scope string
 	var expires time.Time
 	var used sql.NullTime
-	err = tx.QueryRowContext(r.Context(), `SELECT user_id,client_id,redirect_uri,code_challenge,scope_value,expires_at,used_at FROM oauth_codes WHERE code_hash=? FOR UPDATE`, digest(code)).Scan(&userID, &clientID, &redirectURI, &challenge, &scope, &expires, &used)
-	if err != nil || used.Valid || time.Now().UTC().After(expires) || clientID != a.clientID || redirectURI != a.redirectURI {
+	err = tx.QueryRowContext(r.Context(), `SELECT user_id,client_id,redirect_uri,code_challenge,scope_value,expires_at,used_at FROM oauth_codes WHERE code_hash=? FOR UPDATE`, digest(code)).Scan(&userID, &codeClientID, &redirectURI, &challenge, &scope, &expires, &used)
+	if err != nil || used.Valid || time.Now().UTC().After(expires) || codeClientID != authenticatedClientID || redirectURI != r.Form.Get("redirect_uri") {
 		oauthError(w, 400, "invalid_grant")
 		return
 	}
@@ -179,7 +200,7 @@ func (a *app) exchangeCode(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 500, "server_error")
 		return
 	}
-	if err = a.storeTokenSet(r.Context(), tx, userID, scope, access, refresh, family); err != nil || tx.Commit() != nil {
+	if err = a.storeTokenSet(r.Context(), tx, userID, authenticatedClientID, scope, access, refresh, family); err != nil || tx.Commit() != nil {
 		oauthError(w, 500, "server_error")
 		a.alerts.send("Taskly auth token storage failed")
 		return
@@ -200,12 +221,12 @@ func newTokenSet() (string, string, string, error) {
 	return access, refresh, digest(family), err
 }
 
-func (a *app) storeTokenSet(ctx context.Context, tx *sql.Tx, userID uint64, scope, access, refresh, family string) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO oauth_access_tokens (token_hash,family_id,user_id,client_id,scope_value,expires_at) VALUES (?,?,?,?,?,?)`, digest(access), family, userID, a.clientID, scope, time.Now().UTC().Add(15*time.Minute))
+func (a *app) storeTokenSet(ctx context.Context, tx *sql.Tx, userID uint64, clientID, scope, access, refresh, family string) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO oauth_access_tokens (token_hash,family_id,user_id,client_id,scope_value,expires_at) VALUES (?,?,?,?,?,?)`, digest(access), family, userID, clientID, scope, time.Now().UTC().Add(15*time.Minute))
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO oauth_refresh_tokens (token_hash,family_id,user_id,client_id,scope_value,expires_at) VALUES (?,?,?,?,?,?)`, digest(refresh), family, userID, a.clientID, scope, time.Now().UTC().Add(30*24*time.Hour))
+	_, err = tx.ExecContext(ctx, `INSERT INTO oauth_refresh_tokens (token_hash,family_id,user_id,client_id,scope_value,expires_at) VALUES (?,?,?,?,?,?)`, digest(refresh), family, userID, clientID, scope, time.Now().UTC().Add(30*24*time.Hour))
 	return err
 }
 
@@ -221,7 +242,7 @@ func writeTokens(w http.ResponseWriter, access, refresh, scope string) {
 	jsonResponse(w, 200, map[string]any{"access_token": access, "token_type": "Bearer", "expires_in": 900, "refresh_token": refresh, "scope": scope})
 }
 
-func (a *app) refresh(w http.ResponseWriter, r *http.Request) {
+func (a *app) refresh(w http.ResponseWriter, r *http.Request, authenticatedClientID string) {
 	old := r.Form.Get("refresh_token")
 	if old == "" {
 		oauthError(w, 400, "invalid_request")
@@ -234,11 +255,11 @@ func (a *app) refresh(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 	var userID uint64
-	var clientID, scope, family string
+	var tokenClientID, scope, family string
 	var expires time.Time
 	var used, revoked sql.NullTime
-	err = tx.QueryRowContext(r.Context(), `SELECT user_id,client_id,scope_value,family_id,expires_at,used_at,revoked_at FROM oauth_refresh_tokens WHERE token_hash=? FOR UPDATE`, digest(old)).Scan(&userID, &clientID, &scope, &family, &expires, &used, &revoked)
-	if err != nil || clientID != a.clientID || revoked.Valid || time.Now().UTC().After(expires) {
+	err = tx.QueryRowContext(r.Context(), `SELECT user_id,client_id,scope_value,family_id,expires_at,used_at,revoked_at FROM oauth_refresh_tokens WHERE token_hash=? FOR UPDATE`, digest(old)).Scan(&userID, &tokenClientID, &scope, &family, &expires, &used, &revoked)
+	if err != nil || tokenClientID != authenticatedClientID || revoked.Valid || time.Now().UTC().After(expires) {
 		oauthError(w, 400, "invalid_grant")
 		return
 	}
@@ -264,7 +285,7 @@ func (a *app) refresh(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 500, "server_error")
 		return
 	}
-	if err = a.storeTokenSet(r.Context(), tx, userID, scope, access, newRefresh, family); err != nil || tx.Commit() != nil {
+	if err = a.storeTokenSet(r.Context(), tx, userID, authenticatedClientID, scope, access, newRefresh, family); err != nil || tx.Commit() != nil {
 		oauthError(w, 500, "server_error")
 		return
 	}
@@ -279,20 +300,21 @@ func (a *app) introspect(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 400, "invalid_request")
 		return
 	}
-	userID, scope, expires, ok := a.accessToken(r.Context(), r.Form.Get("token"))
+	userID, clientID, scope, expires, ok := a.accessToken(r.Context(), r.Form.Get("token"))
 	if !ok {
 		jsonResponse(w, 200, map[string]bool{"active": false})
 		return
 	}
-	jsonResponse(w, 200, map[string]any{"active": true, "client_id": a.clientID, "sub": strconv.FormatUint(userID, 10), "scope": scope, "aud": "taskly-api", "iss": a.issuer, "exp": expires.Unix(), "token_type": "Bearer"})
+	jsonResponse(w, 200, map[string]any{"active": true, "client_id": clientID, "sub": strconv.FormatUint(userID, 10), "scope": scope, "aud": "taskly-api", "iss": a.issuer, "exp": expires.Unix(), "token_type": "Bearer"})
 }
 
 func (a *app) revoke(w http.ResponseWriter, r *http.Request) {
-	if !a.authenticateClient(w, r) {
-		return
-	}
 	if err := r.ParseForm(); err != nil {
 		oauthError(w, 400, "invalid_request")
+		return
+	}
+	clientID, ok := a.authenticateTokenClient(w, r)
+	if !ok {
 		return
 	}
 	token := r.Form.Get("token")
@@ -303,12 +325,12 @@ func (a *app) revoke(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer tx.Rollback()
-		if _, err := tx.ExecContext(r.Context(), `UPDATE oauth_access_tokens SET revoked_at=UTC_TIMESTAMP() WHERE token_hash=? AND client_id=?`, digest(token), a.clientID); err != nil {
+		if _, err := tx.ExecContext(r.Context(), `UPDATE oauth_access_tokens SET revoked_at=UTC_TIMESTAMP() WHERE token_hash=? AND client_id=?`, digest(token), clientID); err != nil {
 			oauthError(w, 500, "server_error")
 			return
 		}
 		var family string
-		err = tx.QueryRowContext(r.Context(), `SELECT family_id FROM oauth_refresh_tokens WHERE token_hash=? AND client_id=?`, digest(token), a.clientID).Scan(&family)
+		err = tx.QueryRowContext(r.Context(), `SELECT family_id FROM oauth_refresh_tokens WHERE token_hash=? AND client_id=?`, digest(token), clientID).Scan(&family)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			oauthError(w, 500, "server_error")
 			return
@@ -333,7 +355,7 @@ func (a *app) userinfo(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 401, "invalid_token")
 		return
 	}
-	userID, _, _, ok := a.accessToken(r.Context(), parts[1])
+	userID, _, _, _, ok := a.accessToken(r.Context(), parts[1])
 	if !ok {
 		oauthError(w, 401, "invalid_token")
 		return
@@ -348,16 +370,16 @@ func (a *app) userinfo(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, 200, map[string]string{"sub": strconv.FormatUint(userID, 10), "email": email, "name": displayName})
 }
 
-func (a *app) accessToken(ctx context.Context, token string) (uint64, string, time.Time, bool) {
+func (a *app) accessToken(ctx context.Context, token string) (uint64, string, string, time.Time, bool) {
 	if token == "" {
-		return 0, "", time.Time{}, false
+		return 0, "", "", time.Time{}, false
 	}
 	var id uint64
-	var scope string
+	var clientID, scope string
 	var expires time.Time
 	jst := time.Now().In(time.FixedZone("JST", 9*3600))
-	err := a.db.QueryRowContext(ctx, `SELECT t.user_id,t.scope_value,t.expires_at FROM oauth_access_tokens t JOIN users u ON u.id=t.user_id WHERE t.token_hash=? AND t.client_id=? AND t.revoked_at IS NULL AND t.expires_at>UTC_TIMESTAMP() AND u.is_deleted=0 AND NOT EXISTS (SELECT 1 FROM blocks b WHERE b.user_id=u.id AND (b.expires_at IS NULL OR b.expires_at>?))`, digest(token), a.clientID, jst).Scan(&id, &scope, &expires)
-	return id, scope, expires, err == nil
+	err := a.db.QueryRowContext(ctx, `SELECT t.user_id,t.client_id,t.scope_value,t.expires_at FROM oauth_access_tokens t JOIN users u ON u.id=t.user_id WHERE t.token_hash=? AND t.revoked_at IS NULL AND t.expires_at>UTC_TIMESTAMP() AND u.is_deleted=0 AND NOT EXISTS (SELECT 1 FROM blocks b WHERE b.user_id=u.id AND (b.expires_at IS NULL OR b.expires_at>?))`, digest(token), jst).Scan(&id, &clientID, &scope, &expires)
+	return id, clientID, scope, expires, err == nil
 }
 
 func (a *app) subjectActive(ctx context.Context, id uint64) bool {

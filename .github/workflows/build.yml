@@ -17,6 +17,39 @@ jobs:
           cache: true
       - run: go test ./...
       - run: go vet ./...
+  oauth-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Start development auth service
+        run: |
+          cp .env.example .env
+          sed -i 's|^OAUTH_PUBLIC_CLIENTS_JSON=.*|OAUTH_PUBLIC_CLIENTS_JSON=[{"client_id":"taskly-dev","redirect_uri":"http://127.0.0.1/callback"}]|' .env
+          docker compose up -d --build
+          for attempt in $(seq 1 90); do
+            if curl -fsS http://localhost:3067/healthz; then
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS http://localhost:3067/healthz
+      - name: Seed development account and exercise confidential and public clients
+        env:
+          AUTH_DSN: auth:auth_dev_password@tcp(127.0.0.1:3307)/taskly_auth?parseTime=true&charset=utf8mb4&loc=UTC
+          AUTH_DEV_EMAIL: oauth-ci@example.test
+          AUTH_DEV_PASSWORD: oauth-ci-password
+          OAUTH_DEV_PUBLIC_CLIENT_ID: taskly-dev
+          OAUTH_DEV_PUBLIC_REDIRECT_URI: http://127.0.0.1:8765/callback
+        run: |
+          go run ./cmd/seed-dev
+          python3 scripts/smoke-dev.py
+      - name: Stop development auth service
+        if: always()
+        run: docker compose down -v
   image:
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: test

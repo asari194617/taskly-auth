@@ -14,15 +14,16 @@ import (
 )
 
 type app struct {
-	db           *sql.DB
-	issuer       string
-	uiURL        string
-	clientID     string
-	clientSecret string
-	redirectURI  string
-	secure       bool
-	ready        bool
-	alerts       *alerter
+	db            *sql.DB
+	issuer        string
+	uiURL         string
+	clientID      string
+	clientSecret  string
+	redirectURI   string
+	publicClients map[string]string
+	secure        bool
+	ready         bool
+	alerts        *alerter
 }
 
 func env(key, fallback string) string {
@@ -62,6 +63,11 @@ func main() {
 		clientSecret: os.Getenv("OAUTH_CLIENT_SECRET"),
 		redirectURI:  os.Getenv("OAUTH_REDIRECT_URI"),
 		alerts:       alerts,
+	}
+	a.publicClients, err = parsePublicClients(os.Getenv("OAUTH_PUBLIC_CLIENTS_JSON"), a.clientID)
+	if err != nil {
+		alerts.sendSync("Taskly auth startup failed: public client registration invalid")
+		log.Fatal(err)
 	}
 	a.secure = strings.HasPrefix(a.issuer, "https://")
 	a.ready = env("NODE_ENV", "development") != "production" || os.Getenv("AUTH_MIGRATION_READY") == "1"
