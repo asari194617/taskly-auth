@@ -13,6 +13,23 @@ Cloudflare の DNS で以下を設定します。既存の Taskly ホストは C
 
 両ホストに Nginx の vhost と有効な TLS 証明書が必要です。UI は `127.0.0.1:3068`、API は `127.0.0.1:3067` に proxy します。HTTP → HTTPS リダイレクトと Cloudflare Full (strict) を設定します。`deploy/nginx/` に vhost のひな型があります。DNS と証明書が整うまで本番 OAuth redirect は有効にしません。
 
+### 公開先の確認 (2026-09-21)
+
+DNS 登録後、両ホストの A 応答は Cloudflare の proxy IP になり、公開 `/healthz` は HTTPS 200 (`ok`) を返しました。ただし公開 UI の `/login` と API の `/.well-known/oauth-authorization-server` は 404 (`Cannot GET ...`) です。さらに `133.242.49.12` へ直接接続した際の API ホスト名は TLS 証明書が一致せず、同ホストに認証サービスの Docker コンテナと Nginx vhost はありませんでした。**公開 `/healthz` の 200 だけでは認証サービスへの到達を証明できません。** Cloudflare の当該 DNS レコードの Content と、該当する Origin Rule、Worker Route、Redirect Rule を確認してください。Cloudflare proxy の応答から元の A レコードの Content は読み取れません。
+
+公開を有効にする前に、オリジンと Cloudflare 経由の双方で以下を確認します。証明書が一致しない場合は `-k` で検査を通さず、証明書と vhost を設定してから再試行します。
+
+```sh
+curl --resolve taskly-auth-api.iy0306.com:443:133.242.49.12 \
+  https://taskly-auth-api.iy0306.com/.well-known/oauth-authorization-server
+curl --resolve taskly-auth.iy0306.com:443:133.242.49.12 \
+  https://taskly-auth.iy0306.com/login
+curl https://taskly-auth-api.iy0306.com/.well-known/oauth-authorization-server
+curl https://taskly-auth.iy0306.com/login
+```
+
+API は `issuer` が `https://taskly-auth-api.iy0306.com` の JSON、UI は認証画面を返すことを確認します。DNS レコードの Content は両方 `133.242.49.12` とし、別の Cloudflare ルートが割り込まないようにします。
+
 本番 OAuth 設定値は `AUTH_ISSUER=https://taskly-auth-api.iy0306.com`、`AUTH_UI_URL=https://taskly-auth.iy0306.com`、`OAUTH_REDIRECT_URI=https://api.taskly.iy0306.com/auth/oauth/callback`、Taskly 側の `WEB_PUBLIC_URL=https://taskly.iy0306.com` です。Taskly 側の本番環境設定は現行のリポジトリ直下 `.env.production` を暗号化してデプロイする方式であり、`apps/server/.env.production` ではありません。
 
 ## 事前確認
