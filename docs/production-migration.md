@@ -4,22 +4,24 @@
 
 ## DNS
 
-Cloudflare の DNS で以下を設定します。既存の Taskly ホストは Cloudflare proxy を使用しています。
+Cloudflare の DNS で以下を設定します。証明書発行時は DNS only とし、認証サービスの公開検証後に Cloudflare proxy を使う場合は Full (strict) にします。
 
 | Type | Name | Content | Proxy status | TTL |
 | --- | --- | --- | --- | --- |
-| A | `taskly-auth` | `133.242.49.12` | Proxied | Auto |
-| A | `taskly-auth-api` | `133.242.49.12` | Proxied | Auto |
+| A | `taskly-auth` | `133.242.49.12` | DNS only | Auto |
+| A | `taskly-auth-api` | `133.242.49.12` | DNS only | Auto |
 
-両ホストに Nginx の vhost と有効な TLS 証明書が必要です。UI は `127.0.0.1:3068`、API は `127.0.0.1:3067` に proxy します。HTTP → HTTPS リダイレクトと Cloudflare Full (strict) を設定します。`deploy/nginx/` に vhost のひな型があります。DNS と証明書が整うまで本番 OAuth redirect は有効にしません。
+両ホストの Nginx vhost は `deploy/nginx/` に保存します。UI は `127.0.0.1:3068`、API は `127.0.0.1:3067` に proxy し、HTTP は HTTPS にリダイレクトします。バックエンドが不在の間は 503 と `Retry-After` を返します。OAuth の移行ゲートが整うまで本番 OAuth redirect は有効にしません。
 
 ### 公開先の確認 (2026-09-21)
 
 DNS 登録後、両ホストの A 応答は Cloudflare の proxy IP になり、公開 `/healthz` は HTTPS 200 (`ok`) を返しました。ただし公開 UI の `/login` と API の `/.well-known/oauth-authorization-server` は 404 (`Cannot GET ...`) です。さらに `133.242.49.12` へ直接接続した際の API ホスト名は TLS 証明書が一致せず、同ホストに認証サービスの Docker コンテナと Nginx vhost はありませんでした。**公開 `/healthz` の 200 だけでは認証サービスへの到達を証明できません。** Cloudflare の当該 DNS レコードの Content と、該当する Origin Rule、Worker Route、Redirect Rule を確認してください。Cloudflare proxy の応答から元の A レコードの Content は読み取れません。
 
-その後ユーザーが両レコードを DNS only に変更しました。`1.1.1.1` と `8.8.8.8` から両ホストの A レコードが `133.242.49.12` を返すことを確認しました。HTTP はオリジン Nginx の 404、HTTPS は両ホストとも証明書のホスト名不一致です。DNS の宛先は確認できたため、次は認証コンテナ、Nginx vhost、TLS 証明書を整えます。これらが確認できるまで Cloudflare proxy に戻しても認証サービスは利用可能になりません。
+その後ユーザーが両レコードを DNS only に変更しました。`1.1.1.1` と `8.8.8.8` から両ホストの A レコードが `133.242.49.12` を返すことを確認しました。初回の HTTP はオリジン Nginx の 404、HTTPS は証明書のホスト名不一致でした。
 
-公開を有効にする前に、オリジンと Cloudflare 経由の双方で以下を確認します。証明書が一致しない場合は `-k` で検査を通さず、証明書と vhost を設定してから再試行します。
+同日、両 Nginx vhost を本番ホストに配置し、既存の Certbot アカウントで両ホスト名を含む Let's Encrypt 証明書を発行しました。有効期限は 2026-12-20 です。`nginx -t`、HTTP → HTTPS の 301、両ホストの証明書検証、Certbot 更新の dry run が成功しました。HTTPS は現在 503 を返します。これは認証コンテナをまだ起動していないためです。証明書と入口は整いましたが、認証サービスの稼働と本番切り替えは未完了です。
+
+認証コンテナの配置後、オリジンと Cloudflare 経由の双方で以下を確認します。証明書が一致しない場合は `-k` で検査を通さず、証明書と vhost を修正してから再試行します。
 
 ```sh
 curl --resolve taskly-auth-api.iy0306.com:443:133.242.49.12 \
