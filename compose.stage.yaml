@@ -11,6 +11,7 @@ services:
       AUTH_ADDR: 0.0.0.0:3067
       UI_ADDR: 0.0.0.0:3068
       NODE_ENV: production
+      AUTH_MIGRATION_READY: "0"
     networks:
       - taskly
     restart: unless-stopped

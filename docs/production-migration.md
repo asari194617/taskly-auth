@@ -56,7 +56,18 @@ API は `issuer` が `https://taskly-auth-api.iy0306.com` の JSON、UI は認�
 
 `migrate-auth` は `users`, `totp_secrets`, `recovery_codes`, `passkeys`, `login_codes`, `sessions`, `blocks` を主キーごとコピーします。元行を更新・削除しません。移行先に 1 行でも存在すれば拒否します。各テーブルのコピー後と全体コピー後に件数と SHA-256 を比較します。
 
-認証情報への書き込みを停止したことを確認してから、`SOURCE_DSN` と `TARGET_DSN` に異なる database の接続文字列を指定し、`AUTH_WRITES_PAUSED=1 migrate-auth` を実行します。このフラグはオペレーターによる停止確認であり、プログラムが書き込みを止めるものではありません。コピーと最終照合が終わるまで旧ログインを再開しません。失敗した場合は本番切り替えを行わず、バックアップから空の移行先を復元して原因を修正します。
+稼働中に手順を試す場合は、**本番切り替え先とは別の空DB**を用意して `AUTH_MIGRATION_MODE=snapshot migrate-auth` を実行します。元DBの `REPEATABLE READ` 読み取り専用トランザクションから一貫したスナップショットをコピーし、ログにも「切り替え不可」と記録します。元サービスの書き込みは止めません。この DB は検証用であり、新しいユーザー更新を含む正本にはなりません。
+
+本番ホストでは `scripts/provision-rehearsal.py` を一度だけ実行して `taskly_auth_rehearsal` と専用ユーザーを作ります。このユーザーは元DBの上記7テーブルに `SELECT` 権限だけを持ち、検証DBにだけ書き込めます。mode 0600 の `.env.rehearsal` を使い、内部ネットワークで移行イメージを実行します。検証DBを本番認証サービスの `AUTH_DSN` に指定してはいけません。
+
+```sh
+python3 provision-rehearsal.py
+docker run --rm --read-only --network infra_default \
+  --env-file .env.rehearsal --entrypoint /usr/local/bin/migrate-auth \
+  ghcr.io/asari194617/taskly-auth:<verified-commit-sha>
+```
+
+本番切り替え用のコピーでは、認証情報への書き込みを停止したことを確認してから、`SOURCE_DSN` と `TARGET_DSN` に異なる database の接続文字列を指定し、`AUTH_MIGRATION_MODE=cutover AUTH_WRITES_PAUSED=1 migrate-auth` を実行します。このフラグはオペレーターによる停止確認であり、プログラムが書き込みを止めるものではありません。コピーと最終照合が終わるまで旧ログインを再開しません。失敗した場合は本番切り替えを行わず、バックアップから空の移行先を復元して原因を修正します。
 
 既存の `sessions` は保存しますが、新 OAuth セッションとして自動的には引き継ぎません。Taskly API の既存セッションを旧 DB で TTL まで受け入れる期間を設けます。
 既存の `login_codes` も保存しますが、新サービスは UTC の `auth_login_codes` を別に使用します。切り替え中に旧コードを入力したユーザーには新しいコードの再送を案内します。
@@ -73,6 +84,7 @@ API は `issuer` が `https://taskly-auth-api.iy0306.com` の JSON、UI は認�
 - 新しい FQDN の TLS、OAuth redirect、開発環境、Discord 異常通知、切り戻しを確認する。
 
 いずれかが未達なら、本番のログイン経路を切り替えず、旧 DB の認証行も削除しません。
+本番モードの認証 API は `AUTH_MIGRATION_READY=1` を明示するまで `/auth/*` と `/oauth/*` に 503 を返します。内部ステージングでは常に `0` に固定し、全ゲートが満たされるまで公開用 Compose に `1` を渡しません。
 
 ## ロールバック
 

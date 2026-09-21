@@ -21,6 +21,7 @@ type app struct {
 	clientSecret string
 	redirectURI  string
 	secure       bool
+	ready        bool
 	alerts       *alerter
 }
 
@@ -59,6 +60,7 @@ func main() {
 		alerts:       newAlerter(os.Getenv("DISCORD_WEBHOOK_URL")),
 	}
 	a.secure = strings.HasPrefix(a.issuer, "https://")
+	a.ready = env("NODE_ENV", "development") != "production" || os.Getenv("AUTH_MIGRATION_READY") == "1"
 	if a.clientSecret == "" || a.redirectURI == "" {
 		log.Fatal("OAUTH_CLIENT_SECRET and OAUTH_REDIRECT_URI are required")
 	}
@@ -119,6 +121,10 @@ func (a *app) wrapAPI(next http.Handler) http.Handler {
 		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if !a.ready && (strings.HasPrefix(r.URL.Path, "/auth/") || strings.HasPrefix(r.URL.Path, "/oauth/")) {
+			http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		observed := &statusWriter{ResponseWriter: w, status: 200}

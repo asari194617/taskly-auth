@@ -25,3 +25,26 @@ func TestDiscordAlertUsesAcceptedUserAgent(t *testing.T) {
 		t.Fatal("Discord alert was not sent")
 	}
 }
+
+func TestProductionMigrationGate(t *testing.T) {
+	a := &app{ready: false}
+	handler := a.wrapAPI(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	for _, test := range []struct {
+		path string
+		want int
+	}{
+		{path: "/auth/login", want: http.StatusServiceUnavailable},
+		{path: "/oauth/authorize", want: http.StatusServiceUnavailable},
+		{path: "/oauth/token", want: http.StatusServiceUnavailable},
+		{path: "/.well-known/oauth-authorization-server", want: http.StatusOK},
+		{path: "/healthz", want: http.StatusOK},
+	} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, test.path, nil))
+		if response.Code != test.want {
+			t.Errorf("%s: got %d, want %d", test.path, response.Code, test.want)
+		}
+	}
+}

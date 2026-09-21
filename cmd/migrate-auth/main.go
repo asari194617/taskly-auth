@@ -24,6 +24,11 @@ import (
 
 var tables = []string{"users", "totp_secrets", "recovery_codes", "passkeys", "login_codes", "sessions", "blocks"}
 
+type sourceReader interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
 func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -32,7 +37,14 @@ func main() {
 	if sourceDSN == "" || targetDSN == "" || sourceDSN == targetDSN {
 		fail("SOURCE_DSN and TARGET_DSN must be set to different databases")
 	}
-	if os.Getenv("AUTH_WRITES_PAUSED") != "1" {
+	mode := os.Getenv("AUTH_MIGRATION_MODE")
+	if mode == "" {
+		mode = "cutover"
+	}
+	if mode != "cutover" && mode != "snapshot" {
+		fail("AUTH_MIGRATION_MODE must be cutover or snapshot")
+	}
+	if mode == "cutover" && os.Getenv("AUTH_WRITES_PAUSED") != "1" {
 		fail("AUTH_WRITES_PAUSED=1 is required after stopping identity writes")
 	}
 	// Raw DATETIME bytes must be copied unchanged; parseTime=true would turn
@@ -73,13 +85,24 @@ func main() {
 	if sourceDB == targetDB {
 		fail("source and target database names must differ")
 	}
+	var reading sourceReader = source
+	if mode == "snapshot" {
+		// A consistent read-only source snapshot permits a rehearsal while the
+		// legacy app stays live. Its target is never a cutover-ready database.
+		tx, err := source.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+		if err != nil {
+			fail("source snapshot: ", err)
+		}
+		defer tx.Rollback()
+		reading = tx
+	}
 	for _, table := range tables {
-		if err := copyTable(ctx, source, target, table); err != nil {
+		if err := copyTable(ctx, reading, target, table); err != nil {
 			failf("%s: %v", table, err)
 		}
 	}
 	for _, table := range tables {
-		sCount, sHash, err := fingerprint(ctx, source, table)
+		sCount, sHash, err := fingerprint(ctx, reading, table)
 		if err != nil {
 			fail(err)
 		}
@@ -91,7 +114,11 @@ func main() {
 			failf("%s changed during copy; keep old login active and reconcile before retry", table)
 		}
 	}
-	log.Println("identity copy verified; old tables remain intact; reconcile writes before switching traffic")
+	if mode == "snapshot" {
+		log.Println("snapshot rehearsal verified; target is not eligible for traffic cutover")
+	} else {
+		log.Println("identity copy verified; old tables remain intact; reconcile writes before switching traffic")
+	}
 }
 
 func fail(values ...any)                 { notifyFailure(); log.Fatal(values...) }
@@ -116,7 +143,7 @@ func notifyFailure() {
 	}
 }
 
-func copyTable(ctx context.Context, source, target *sql.DB, table string) error {
+func copyTable(ctx context.Context, source sourceReader, target *sql.DB, table string) error {
 	// table is from the fixed allowlist above; never interpolate an input table.
 	var ignored, ddl string
 	if err := source.QueryRowContext(ctx, "SHOW CREATE TABLE `"+table+"`").Scan(&ignored, &ddl); err != nil {
@@ -207,7 +234,7 @@ func copyTable(ctx context.Context, source, target *sql.DB, table string) error 
 	return nil
 }
 
-func fingerprint(ctx context.Context, db *sql.DB, table string) (int64, string, error) {
+func fingerprint(ctx context.Context, db sourceReader, table string) (int64, string, error) {
 	rows, err := db.QueryContext(ctx, "SELECT * FROM `"+table+"` ORDER BY id")
 	if err != nil {
 		return 0, "", err
