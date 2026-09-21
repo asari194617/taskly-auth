@@ -46,6 +46,7 @@ API は `issuer` が `https://taskly-auth-api.iy0306.com` の JSON、UI は認�
 DB 接続・スキーマ・設定の起動失敗時は、Discord への送信が完了するか5秒のタイムアウトになるまで待ってからプロセスを終了します。通常のリクエスト中の通知は非同期です。起動失敗経路は単体テスト済みですが、本番 webhook を用いた障害注入は未実施です。コミット `f467c41` のイメージを内部ステージングへ反映し、healthy、`users` 0 行、内部 OAuth 503、公開 UI 503 を再確認しました。
 移行ガードを追加したコミット `6c4a410` の内部コンテナでも health は成功し、`/oauth/authorize` は 503 でした。公開ポートはなく、公開 FQDN も 503 を維持しています。
 その後の OAuth 実装では、リフレッシュトークン系列の再利用・失効時に同系列のアクセストークンも失効させるため `oauth_access_tokens.family_id` を追加しました。既にテーブルがある内部ステージングでは起動時にカラムとインデックスを追加します。コミット `e2ab506` のイメージを内部ステージングへ配置し、コンテナの healthy、DB の追加カラム、`users` 0 行、内部 `/oauth/authorize` の 503 を確認しました。公開 API も TLS 検証成功の 503 を維持しています。
+コミット `37de2fe` で登録済み public client のAuthorization Code + PKCEを追加し、MySQLを使うCIスモークテストでconfidential/public両clientのコード交換・更新・再利用検知が成功しました。同イメージの内部ステージングは healthy です。本番の public client 登録は空のため、メタデータは `client_secret_basic` だけを示します。認証DBは0ユーザー、公開OAuthは503を維持しています。
 
 ## 事前確認
 
