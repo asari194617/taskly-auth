@@ -98,6 +98,11 @@ assert rotated["refresh_token"] != tokens["refresh_token"]
 assert token_request({"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"]}).status == 400
 assert token_request({"grant_type": "refresh_token", "refresh_token": rotated["refresh_token"]}).status == 400
 
+for access_token in (tokens["access_token"], rotated["access_token"]):
+    response = request(api + "/oauth/introspect", {"token": access_token},
+                       {"Authorization": "Basic " + basic})
+    assert json.load(response)["active"] is False
+
 response = request(api + "/oauth/revoke", {"token": tokens["access_token"]},
                    {"Authorization": "Basic " + basic})
 assert response.status == 200

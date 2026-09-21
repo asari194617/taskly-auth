@@ -201,11 +201,19 @@ func newTokenSet() (string, string, string, error) {
 }
 
 func (a *app) storeTokenSet(ctx context.Context, tx *sql.Tx, userID uint64, scope, access, refresh, family string) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO oauth_access_tokens (token_hash,user_id,client_id,scope_value,expires_at) VALUES (?,?,?,?,?)`, digest(access), userID, a.clientID, scope, time.Now().UTC().Add(15*time.Minute))
+	_, err := tx.ExecContext(ctx, `INSERT INTO oauth_access_tokens (token_hash,family_id,user_id,client_id,scope_value,expires_at) VALUES (?,?,?,?,?,?)`, digest(access), family, userID, a.clientID, scope, time.Now().UTC().Add(15*time.Minute))
 	if err != nil {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO oauth_refresh_tokens (token_hash,family_id,user_id,client_id,scope_value,expires_at) VALUES (?,?,?,?,?,?)`, digest(refresh), family, userID, a.clientID, scope, time.Now().UTC().Add(30*24*time.Hour))
+	return err
+}
+
+func revokeFamily(ctx context.Context, tx *sql.Tx, family string) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE oauth_refresh_tokens SET revoked_at=UTC_TIMESTAMP() WHERE family_id=? AND revoked_at IS NULL`, family); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE oauth_access_tokens SET revoked_at=UTC_TIMESTAMP() WHERE family_id=? AND revoked_at IS NULL`, family)
 	return err
 }
 
@@ -239,8 +247,10 @@ func (a *app) refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if used.Valid {
-		_, _ = tx.ExecContext(r.Context(), `UPDATE oauth_refresh_tokens SET revoked_at=UTC_TIMESTAMP() WHERE family_id=? AND revoked_at IS NULL`, family)
-		_ = tx.Commit()
+		if err := revokeFamily(r.Context(), tx, family); err != nil || tx.Commit() != nil {
+			oauthError(w, 500, "server_error")
+			return
+		}
 		oauthError(w, 400, "invalid_grant")
 		a.alerts.send("Taskly auth refresh token reuse detected")
 		return
@@ -287,21 +297,31 @@ func (a *app) revoke(w http.ResponseWriter, r *http.Request) {
 	}
 	token := r.Form.Get("token")
 	if token != "" {
-		if _, err := a.db.ExecContext(r.Context(), `UPDATE oauth_access_tokens SET revoked_at=UTC_TIMESTAMP() WHERE token_hash=? AND client_id=?`, digest(token), a.clientID); err != nil {
+		tx, err := a.db.BeginTx(r.Context(), nil)
+		if err != nil {
+			oauthError(w, 500, "server_error")
+			return
+		}
+		defer tx.Rollback()
+		if _, err := tx.ExecContext(r.Context(), `UPDATE oauth_access_tokens SET revoked_at=UTC_TIMESTAMP() WHERE token_hash=? AND client_id=?`, digest(token), a.clientID); err != nil {
 			oauthError(w, 500, "server_error")
 			return
 		}
 		var family string
-		err := a.db.QueryRowContext(r.Context(), `SELECT family_id FROM oauth_refresh_tokens WHERE token_hash=? AND client_id=?`, digest(token), a.clientID).Scan(&family)
+		err = tx.QueryRowContext(r.Context(), `SELECT family_id FROM oauth_refresh_tokens WHERE token_hash=? AND client_id=?`, digest(token), a.clientID).Scan(&family)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			oauthError(w, 500, "server_error")
 			return
 		}
 		if err == nil {
-			if _, err := a.db.ExecContext(r.Context(), `UPDATE oauth_refresh_tokens SET revoked_at=UTC_TIMESTAMP() WHERE family_id=? AND revoked_at IS NULL`, family); err != nil {
+			if err := revokeFamily(r.Context(), tx, family); err != nil {
 				oauthError(w, 500, "server_error")
 				return
 			}
+		}
+		if err := tx.Commit(); err != nil {
+			oauthError(w, 500, "server_error")
+			return
 		}
 	}
 	w.WriteHeader(http.StatusOK)

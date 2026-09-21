@@ -101,7 +101,7 @@ func (a *app) ensureOAuthSchema(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS auth_login_codes (id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT, email VARCHAR(255) NOT NULL, hashed_code VARCHAR(255) NOT NULL, expires_at DATETIME NOT NULL, consumed_at DATETIME, failed_attempts INT NOT NULL DEFAULT 0, locked_until DATETIME, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX idx_auth_login_codes_email (email))`,
 		`CREATE TABLE IF NOT EXISTS oauth_authorization_requests (id_hash CHAR(64) PRIMARY KEY, client_id VARCHAR(128) NOT NULL, redirect_uri VARCHAR(2048) NOT NULL, state_value VARCHAR(2048) NOT NULL, code_challenge VARCHAR(128) NOT NULL, scope_value VARCHAR(255) NOT NULL, expires_at DATETIME NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
 		`CREATE TABLE IF NOT EXISTS oauth_codes (code_hash CHAR(64) PRIMARY KEY, user_id BIGINT UNSIGNED NOT NULL, client_id VARCHAR(128) NOT NULL, redirect_uri VARCHAR(2048) NOT NULL, code_challenge VARCHAR(128) NOT NULL, scope_value VARCHAR(255) NOT NULL, expires_at DATETIME NOT NULL, used_at DATETIME, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
-		`CREATE TABLE IF NOT EXISTS oauth_access_tokens (token_hash CHAR(64) PRIMARY KEY, user_id BIGINT UNSIGNED NOT NULL, client_id VARCHAR(128) NOT NULL, scope_value VARCHAR(255) NOT NULL, expires_at DATETIME NOT NULL, revoked_at DATETIME, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+		`CREATE TABLE IF NOT EXISTS oauth_access_tokens (token_hash CHAR(64) PRIMARY KEY, family_id CHAR(64), user_id BIGINT UNSIGNED NOT NULL, client_id VARCHAR(128) NOT NULL, scope_value VARCHAR(255) NOT NULL, expires_at DATETIME NOT NULL, revoked_at DATETIME, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX idx_oauth_access_family (family_id))`,
 		`CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (token_hash CHAR(64) PRIMARY KEY, family_id CHAR(64) NOT NULL, user_id BIGINT UNSIGNED NOT NULL, client_id VARCHAR(128) NOT NULL, scope_value VARCHAR(255) NOT NULL, expires_at DATETIME NOT NULL, used_at DATETIME, revoked_at DATETIME, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX idx_family (family_id))`,
 		`CREATE TABLE IF NOT EXISTS auth_sessions (token_hash CHAR(64) PRIMARY KEY, user_id BIGINT UNSIGNED NOT NULL, expires_at DATETIME NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
 		`CREATE TABLE IF NOT EXISTS auth_challenges (token_hash CHAR(64) PRIMARY KEY, user_id BIGINT UNSIGNED NOT NULL, attempts INT NOT NULL DEFAULT 0, expires_at DATETIME NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
@@ -110,6 +110,17 @@ func (a *app) ensureOAuthSchema(ctx context.Context) error {
 	for _, statement := range statements {
 		if _, err := a.db.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("create OAuth table: %w", err)
+		}
+	}
+	// Stage deployments may already have the table from an earlier image. Existing
+	// tokens have no family and expire within 15 minutes; new tokens are linked.
+	var familyColumnCount int
+	if err := a.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='oauth_access_tokens' AND COLUMN_NAME='family_id'`).Scan(&familyColumnCount); err != nil {
+		return fmt.Errorf("inspect access token schema: %w", err)
+	}
+	if familyColumnCount == 0 {
+		if _, err := a.db.ExecContext(ctx, `ALTER TABLE oauth_access_tokens ADD COLUMN family_id CHAR(64), ADD INDEX idx_oauth_access_family (family_id)`); err != nil {
+			return fmt.Errorf("upgrade access token schema: %w", err)
 		}
 	}
 	var count int

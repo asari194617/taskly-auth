@@ -115,13 +115,15 @@ CREATE TABLE IF NOT EXISTS oauth_codes (
 
 CREATE TABLE IF NOT EXISTS oauth_access_tokens (
   token_hash CHAR(64) PRIMARY KEY,
+  family_id CHAR(64),
   user_id BIGINT UNSIGNED NOT NULL,
   client_id VARCHAR(128) NOT NULL,
   scope_value VARCHAR(255) NOT NULL,
   expires_at DATETIME NOT NULL,
   revoked_at DATETIME,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_oauth_access_user (user_id)
+  INDEX idx_oauth_access_user (user_id),
+  INDEX idx_oauth_access_family (family_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
