@@ -13,6 +13,8 @@ Cloudflare の DNS で以下を設定します。既存の Taskly ホストは C
 
 両ホストに Nginx の vhost と有効な TLS 証明書が必要です。UI は `127.0.0.1:3068`、API は `127.0.0.1:3067` に proxy します。HTTP → HTTPS リダイレクトと Cloudflare Full (strict) を設定します。`deploy/nginx/` に vhost のひな型があります。DNS と証明書が整うまで本番 OAuth redirect は有効にしません。
 
+本番 OAuth 設定値は `AUTH_ISSUER=https://taskly-auth-api.iy0306.com`、`AUTH_UI_URL=https://taskly-auth.iy0306.com`、`OAUTH_REDIRECT_URI=https://api.taskly.iy0306.com/auth/oauth/callback`、Taskly 側の `WEB_PUBLIC_URL=https://taskly.iy0306.com` です。Taskly 側の本番環境設定は現行のリポジトリ直下 `.env.production` を暗号化してデプロイする方式であり、`apps/server/.env.production` ではありません。
+
 ## 事前確認
 
 1. 本番の暗号鍵 `TOTP_ENC_KEY`、SMTP 設定、Discord webhook を既存の暗号化された本番環境設定から認証サービスの `.env.production` に安全に移します。ログや Git に値を出しません。
@@ -36,6 +38,7 @@ Cloudflare の DNS で以下を設定します。既存の Taskly ホストは C
 - ユーザー ID、件数、ハッシュ、パスワード認証、メールコード、TOTP、復旧コード、ブロック判定を照合する。
 - 旧 RP ID のパスキー利用者がログインでき、対象ユーザーが新 RP ID に再登録できる。
 - 旧 Taskly アプリのユーザー・パスワード・TOTP・復旧コード・パスキー更新経路を auth DB に移管する。旧 DB と新 DB の書き込み競合を解消する。
+- native/public client の PKCE 接続と、Taskly セッション・認証サービスセッションの連携ログアウトを確認する。
 - 既存の API キー、権限、ユーザー参照、既存セッションを確認する。
 - 新しい FQDN の TLS、OAuth redirect、開発環境、Discord 異常通知、切り戻しを確認する。
 
