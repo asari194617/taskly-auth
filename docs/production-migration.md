@@ -17,6 +17,8 @@ Cloudflare の DNS で以下を設定します。既存の Taskly ホストは C
 
 DNS 登録後、両ホストの A 応答は Cloudflare の proxy IP になり、公開 `/healthz` は HTTPS 200 (`ok`) を返しました。ただし公開 UI の `/login` と API の `/.well-known/oauth-authorization-server` は 404 (`Cannot GET ...`) です。さらに `133.242.49.12` へ直接接続した際の API ホスト名は TLS 証明書が一致せず、同ホストに認証サービスの Docker コンテナと Nginx vhost はありませんでした。**公開 `/healthz` の 200 だけでは認証サービスへの到達を証明できません。** Cloudflare の当該 DNS レコードの Content と、該当する Origin Rule、Worker Route、Redirect Rule を確認してください。Cloudflare proxy の応答から元の A レコードの Content は読み取れません。
 
+その後ユーザーが両レコードを DNS only に変更しました。`1.1.1.1` と `8.8.8.8` から両ホストの A レコードが `133.242.49.12` を返すことを確認しました。HTTP はオリジン Nginx の 404、HTTPS は両ホストとも証明書のホスト名不一致です。DNS の宛先は確認できたため、次は認証コンテナ、Nginx vhost、TLS 証明書を整えます。これらが確認できるまで Cloudflare proxy に戻しても認証サービスは利用可能になりません。
+
 公開を有効にする前に、オリジンと Cloudflare 経由の双方で以下を確認します。証明書が一致しない場合は `-k` で検査を通さず、証明書と vhost を設定してから再試行します。
 
 ```sh
