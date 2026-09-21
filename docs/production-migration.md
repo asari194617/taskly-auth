@@ -43,6 +43,7 @@ API は `issuer` が `https://taskly-auth-api.iy0306.com` の JSON、UI は認�
 `compose.stage.yaml` は GitHub Actions で作成したコミット SHA 固定のイメージを内部 Docker ネットワークだけで動かします。手動実行した workflow は同じイメージを 3 日間の非公開 artifact として保存します。これを `gh run download`、SSH 転送、`docker load` で本番ホストに入れます。ホストのポートを公開しないため Nginx は 503 のままです。内部の DB 接続、OAuth メタデータ、Discord 通知を検証した後に限り、移行と書き込み所有権の切り替えに進みます。`compose.prod.yaml` に切り替える前に下記の全ゲートを満たす必要があります。
 
 2026-09-21 に専用 DB と設定ファイルを作成し、内部ステージングコンテナの health check と OAuth メタデータを確認しました。新 DB の `users` は 0 行で、元 DB のユーザー行は変更していません。公開 FQDN は引き続き HTTPS 503 です。Discord webhook の実送信では既定の HTTP クライアント名が 403 となり、`TasklyAuth/1.0` を指定すると 204 で受理されました。通知コードにこのヘッダーを設定しています。
+移行ガードを追加したコミット `6c4a410` の内部コンテナでも health は成功し、`/oauth/authorize` は 503 でした。公開ポートはなく、公開 FQDN も 503 を維持しています。
 
 ## 事前確認
 
@@ -59,6 +60,8 @@ API は `issuer` が `https://taskly-auth-api.iy0306.com` の JSON、UI は認�
 稼働中に手順を試す場合は、**本番切り替え先とは別の空DB**を用意して `AUTH_MIGRATION_MODE=snapshot migrate-auth` を実行します。元DBの `REPEATABLE READ` 読み取り専用トランザクションから一貫したスナップショットをコピーし、ログにも「切り替え不可」と記録します。元サービスの書き込みは止めません。この DB は検証用であり、新しいユーザー更新を含む正本にはなりません。
 
 本番ホストでは `scripts/provision-rehearsal.py` を一度だけ実行して `taskly_auth_rehearsal` と専用ユーザーを作ります。このユーザーは元DBの上記7テーブルに `SELECT` 権限だけを持ち、検証DBにだけ書き込めます。mode 0600 の `.env.rehearsal` を使い、内部ネットワークで移行イメージを実行します。検証DBを本番認証サービスの `AUTH_DSN` に指定してはいけません。
+
+2026-09-21 の本番ホスト上の検証では、`users` 47、`totp_secrets` 1、`recovery_codes` 10、`passkeys` 1、`login_codes` 23、`sessions` 68、`blocks` 2 行をスナップショットからコピーし、7テーブルすべての件数と SHA-256 が一致しました。実行後のユーザー件数は元DB 47、切り替え先 `taskly_auth` 0、検証DB 47 です。元DBは書き込み可能なままで、この検証DBを切り替え先には使いません。
 
 ```sh
 python3 provision-rehearsal.py
