@@ -80,7 +80,7 @@ docker run --rm --read-only --network infra_default \
   ghcr.io/asari194617/taskly-auth:<verified-commit-sha>
 ```
 
-本番切り替え用のコピーでは、認証情報への書き込みを停止したことを確認してから、`SOURCE_DSN` と `TARGET_DSN` に異なる database の接続文字列を指定し、`AUTH_MIGRATION_MODE=cutover AUTH_WRITES_PAUSED=1 migrate-auth` を実行します。このフラグはオペレーターによる停止確認であり、プログラムが書き込みを止めるものではありません。コピーと最終照合が終わるまで旧ログインを再開しません。失敗した場合は本番切り替えを行わず、バックアップから空の移行先を復元して原因を修正します。
+本番切り替え用のコピーでは、Taskly API の全インスタンスで `AUTH_WRITES_PAUSED=1` の保守ゲートを有効にし、GET の OAuth コールバックを含む `/healthz` 以外が503になることを確認します。バックグラウンド処理と外部 DB クライアントも停止したことを確認してから、`SOURCE_DSN` と `TARGET_DSN` に異なる database の接続文字列を指定し、`AUTH_MIGRATION_MODE=cutover AUTH_WRITES_PAUSED=1 migrate-auth` を実行します。移行ツール側のフラグはオペレーターによる停止確認であり、プログラムが書き込みを止めるものではありません。コピーと最終照合が終わるまで旧ログインを再開しません。失敗した場合は本番切り替えを行わず、バックアップから空の移行先を復元して原因を修正します。
 
 既存の `sessions` は保存しますが、新 OAuth セッションとして自動的には引き継ぎません。Taskly API の既存セッションを旧 DB で TTL まで受け入れる期間を設けます。
 既存の `login_codes` も保存しますが、新サービスは UTC の `auth_login_codes` を別に使用します。切り替え中に旧コードを入力したユーザーには新しいコードの再送を案内します。
