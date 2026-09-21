@@ -220,21 +220,21 @@ func (a *app) consumeEmailCode(r *http.Request, email, code string) bool {
 	var expires time.Time
 	var consumed, locked sql.NullTime
 	var attempts int
-	err = tx.QueryRowContext(r.Context(), `SELECT id,hashed_code,expires_at,consumed_at,locked_until,failed_attempts FROM login_codes WHERE email=? ORDER BY id DESC LIMIT 1 FOR UPDATE`, email).Scan(&id, &hashed, &expires, &consumed, &locked, &attempts)
+	err = tx.QueryRowContext(r.Context(), `SELECT id,hashed_code,expires_at,consumed_at,locked_until,failed_attempts FROM auth_login_codes WHERE email=? ORDER BY id DESC LIMIT 1 FOR UPDATE`, email).Scan(&id, &hashed, &expires, &consumed, &locked, &attempts)
 	if err != nil || consumed.Valid || time.Now().UTC().After(expires) || (locked.Valid && time.Now().UTC().Before(locked.Time)) {
 		return false
 	}
 	if !equal(hashed, digest(code)) {
 		attempts++
 		if attempts >= 5 {
-			_, _ = tx.ExecContext(r.Context(), `UPDATE login_codes SET failed_attempts=?,locked_until=expires_at WHERE id=?`, attempts, id)
+			_, _ = tx.ExecContext(r.Context(), `UPDATE auth_login_codes SET failed_attempts=?,locked_until=expires_at WHERE id=?`, attempts, id)
 		} else {
-			_, _ = tx.ExecContext(r.Context(), `UPDATE login_codes SET failed_attempts=? WHERE id=?`, attempts, id)
+			_, _ = tx.ExecContext(r.Context(), `UPDATE auth_login_codes SET failed_attempts=? WHERE id=?`, attempts, id)
 		}
 		_ = tx.Commit()
 		return false
 	}
-	if _, err := tx.ExecContext(r.Context(), `UPDATE login_codes SET consumed_at=UTC_TIMESTAMP() WHERE id=?`, id); err != nil {
+	if _, err := tx.ExecContext(r.Context(), `UPDATE auth_login_codes SET consumed_at=UTC_TIMESTAMP() WHERE id=?`, id); err != nil {
 		return false
 	}
 	return tx.Commit() == nil
@@ -305,7 +305,7 @@ func (a *app) requestCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code := fmt.Sprintf("%06d", n.Int64())
-	_, err = a.db.ExecContext(r.Context(), `INSERT INTO login_codes (email,hashed_code,expires_at) VALUES (?,?,?)`, email, digest(code), time.Now().UTC().Add(10*time.Minute))
+	_, err = a.db.ExecContext(r.Context(), `INSERT INTO auth_login_codes (email,hashed_code,expires_at) VALUES (?,?,?)`, email, digest(code), time.Now().UTC().Add(10*time.Minute))
 	if err != nil {
 		oauthError(w, 500, "server_error")
 		a.alerts.send("Taskly auth email code storage failed")

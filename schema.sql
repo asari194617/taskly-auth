@@ -54,6 +54,19 @@ CREATE TABLE IF NOT EXISTS login_codes (
   INDEX idx_login_codes_email (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Fresh OAuth-era codes use UTC timestamps; imported legacy codes remain intact.
+CREATE TABLE IF NOT EXISTS auth_login_codes (
+  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  email VARCHAR(255) NOT NULL,
+  hashed_code VARCHAR(255) NOT NULL,
+  expires_at DATETIME NOT NULL,
+  consumed_at DATETIME,
+  failed_attempts INT NOT NULL DEFAULT 0,
+  locked_until DATETIME,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_auth_login_codes_email (email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS sessions (
   id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
   user_id BIGINT UNSIGNED NOT NULL,
