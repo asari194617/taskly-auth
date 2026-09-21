@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -23,6 +24,31 @@ func TestDiscordAlertUsesAcceptedUserAgent(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("Discord alert was not sent")
+	}
+}
+
+func TestFatalAlertCompletesBeforeReturn(t *testing.T) {
+	requests := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Content string `json:"content"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode alert: %v", err)
+		}
+		requests <- body.Content
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	newAlerter(server.URL).sendSync("startup failed")
+	select {
+	case message := <-requests:
+		if message != "startup failed" {
+			t.Fatalf("unexpected alert: %q", message)
+		}
+	default:
+		t.Fatal("fatal alert returned before delivery")
 	}
 }
 

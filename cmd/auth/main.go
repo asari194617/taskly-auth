@@ -33,13 +33,16 @@ func env(key, fallback string) string {
 }
 
 func main() {
+	alerts := newAlerter(os.Getenv("DISCORD_WEBHOOK_URL"))
 	dsn := os.Getenv("AUTH_DSN")
 	if dsn == "" {
+		alerts.sendSync("Taskly auth startup failed: missing database configuration")
 		log.Fatal("AUTH_DSN is required")
 	}
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
-		log.Fatal(err)
+		alerts.sendSync("Taskly auth startup failed: database configuration invalid")
+		log.Fatal("auth DB configuration invalid")
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(20)
@@ -48,7 +51,8 @@ func main() {
 	err = db.PingContext(ctx)
 	cancel()
 	if err != nil {
-		log.Fatal("auth DB unavailable: ", err)
+		alerts.sendSync("Taskly auth startup failed: database unavailable")
+		log.Fatal("auth DB unavailable")
 	}
 	a := &app{
 		db:           db,
@@ -57,20 +61,24 @@ func main() {
 		clientID:     env("OAUTH_CLIENT_ID", "taskly-web"),
 		clientSecret: os.Getenv("OAUTH_CLIENT_SECRET"),
 		redirectURI:  os.Getenv("OAUTH_REDIRECT_URI"),
-		alerts:       newAlerter(os.Getenv("DISCORD_WEBHOOK_URL")),
+		alerts:       alerts,
 	}
 	a.secure = strings.HasPrefix(a.issuer, "https://")
 	a.ready = env("NODE_ENV", "development") != "production" || os.Getenv("AUTH_MIGRATION_READY") == "1"
 	if a.clientSecret == "" || a.redirectURI == "" {
+		alerts.sendSync("Taskly auth startup failed: OAuth configuration missing")
 		log.Fatal("OAUTH_CLIENT_SECRET and OAUTH_REDIRECT_URI are required")
 	}
 	if env("NODE_ENV", "development") == "production" && (!a.secure || !strings.HasPrefix(a.uiURL, "https://") || !strings.HasPrefix(a.redirectURI, "https://")) {
+		alerts.sendSync("Taskly auth startup failed: HTTPS configuration invalid")
 		log.Fatal("production OAuth endpoints must use HTTPS")
 	}
 	if env("NODE_ENV", "development") == "production" && (len(a.clientSecret) < 32 || os.Getenv("TOTP_ENC_KEY") == "" || strings.EqualFold(env("SMTP_TLS", "starttls"), "none")) {
+		alerts.sendSync("Taskly auth startup failed: security configuration invalid")
 		log.Fatal("production client secret, TOTP key, and SMTP TLS configuration are required")
 	}
 	if err := a.ensureOAuthSchema(context.Background()); err != nil {
+		alerts.sendSync("Taskly auth startup failed: database schema unavailable")
 		log.Fatal("OAuth schema: ", err)
 	}
 	api := http.NewServeMux()
@@ -99,6 +107,7 @@ func main() {
 	}()
 	log.Printf("auth API listening on %s", apiServer.Addr)
 	if err := apiServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+		alerts.sendSync("Taskly auth API unavailable")
 		log.Fatal(err)
 	}
 }

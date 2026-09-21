@@ -64,36 +64,50 @@ type alerter struct {
 
 func newAlerter(url string) *alerter { return &alerter{url: url} }
 func (a *alerter) send(message string) {
+	if a.reserve() {
+		go a.deliver(message)
+	}
+}
+
+// sendSync is for fatal startup errors; an asynchronous send would be lost on exit.
+func (a *alerter) sendSync(message string) {
+	if a.reserve() {
+		a.deliver(message)
+	}
+}
+
+func (a *alerter) reserve() bool {
 	if a.url == "" {
-		return
+		return false
 	}
 	a.mu.Lock()
+	defer a.mu.Unlock()
 	if time.Since(a.last) < 5*time.Minute {
-		a.mu.Unlock()
-		return
+		return false
 	}
 	a.last = time.Now()
-	a.mu.Unlock()
-	go func() {
-		body, _ := json.Marshal(map[string]string{"content": message})
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.url, bytes.NewReader(body))
-		if err != nil {
-			return
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("User-Agent", "TasklyAuth/1.0")
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			log.Print("Discord alert delivery failed")
-			return
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode >= 300 {
-			log.Printf("Discord alert delivery status=%d", resp.StatusCode)
-		}
-	}()
+	return true
+}
+
+func (a *alerter) deliver(message string) {
+	body, _ := json.Marshal(map[string]string{"content": message})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.url, bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "TasklyAuth/1.0")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Print("Discord alert delivery failed")
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		log.Printf("Discord alert delivery status=%d", resp.StatusCode)
+	}
 }
 
 func (a *app) ensureOAuthSchema(ctx context.Context) error {
