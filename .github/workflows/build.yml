@@ -37,3 +37,15 @@ jobs:
           context: .
           push: true
           tags: ghcr.io/asari194617/taskly-auth:${{ github.sha }}
+      - name: Save private image for production-host staging
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          docker pull ghcr.io/asari194617/taskly-auth:${{ github.sha }}
+          docker save ghcr.io/asari194617/taskly-auth:${{ github.sha }} -o "$RUNNER_TEMP/taskly-auth-image.tar"
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: taskly-auth-image-${{ github.sha }}
+          path: ${{ runner.temp }}/taskly-auth-image.tar
+          retention-days: 3
+          compression-level: 0
