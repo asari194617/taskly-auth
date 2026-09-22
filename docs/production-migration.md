@@ -134,6 +134,8 @@ docker run --rm --read-only --network infra_default \
 
 2026-09-23 に復旧コード再発行を追加し、独立した開発用 MySQL で旧コード失効・新コード利用・使用済み状態を検証した。GitHub Actions のジョブ開始が請求・利用上限で拒否されたため、コミット `9ab872d0ad3000d9229559064aa81e2b0e931c5e` をローカルで `linux/amd64` イメージにビルドした。転送前後の tar SHA-256 は `e27bb4128a7473c9ff8e57bbcf060362bf13bb87b0d836e0895f819b6c0cb19b` で一致した。内部ステージングは healthy、`/healthz` は200、`/security` は200、`/auth/recovery/generate` は移行ゲートで503。公開 UI/API は証明書検証成功の503、旧 DB は47ユーザー、新認証 DB は0ユーザーで、旧 DB の正本を維持する。このイメージには GitHub CI の実行結果がない。
 
+その後 GitHub Actions が復旧し、PR の Go テスト・MySQL スモークと手動ワークフロー `35745333508` の Go テスト・MySQL スモーク・イメージ作成が成功した。コミット `dcdac23f61cd8125fa94a9cc867b9fd589ed59d1` の非公開成果物を取得し、転送前後の tar SHA-256 `58f4301a6077a5acc9c32d2ef078349164a07f635b5b4fa9fc4ac17fb64eb331` を照合して内部ステージングに配置した。コンテナは healthy、ホスト公開ポートなし、内部 `/healthz` は200、`/security` は200、`/auth/recovery/generate` は503。公開 UI/API は TLS 検証成功の503、旧 DB は47ユーザー、新認証 DB は0ユーザーだった。
+
 ## ロールバック
 
 Taskly Web の OAuth リンクを非表示にし、旧ログインを維持します。新認証 DB 側で行われたパスワード変更、復旧コード消費、TOTP 設定、メールログイン設定などがあれば、旧 DB に安全に反映してから旧方式を正本に戻します。source と target のバックアップを保持し、単純な上書き復元で新しい更新を失わないようにします。
