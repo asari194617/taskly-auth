@@ -16,7 +16,7 @@ var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html>
 <div id="secondary"><label for="code">メールコード</label><input id="code" inputmode="numeric" autocomplete="one-time-code"><button id="send-code" type="button">メールコードを送信</button>
 <label for="totp">認証アプリのコード</label><input id="totp" inputmode="numeric" autocomplete="one-time-code">
 <label for="recovery">復旧コード</label><input id="recovery" autocomplete="off"></div>
-<button id="submit" type="submit">ログイン</button></form><p>既存のパスキーは <a href="{{.Legacy}}">従来のログイン画面</a> で利用できます。</p></main><script src="/login.js" defer></script></body></html>`))
+<button id="submit" type="submit">ログイン</button>{{if .Passkeys}} <button id="passkey" type="button">パスキーでログイン</button>{{end}}</form><p>認証できない場合は <a href="{{.Legacy}}">従来のログイン画面</a> を利用できます。</p></main><script src="/login.js" defer></script></body></html>`))
 
 func (a *app) loginPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -24,7 +24,7 @@ func (a *app) loginPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src "+a.issuer+"; base-uri 'none'; form-action 'self'")
 	legacy := env("LEGACY_LOGIN_URL", "https://taskly.iy0306.com/login")
-	_ = loginTemplate.Execute(w, map[string]string{"API": a.issuer, "Legacy": legacy})
+	_ = loginTemplate.Execute(w, map[string]any{"API": a.issuer, "Legacy": legacy, "Passkeys": a.webAuthn != nil})
 }
 
 func (a *app) loginJS(w http.ResponseWriter, r *http.Request) {
@@ -85,6 +85,16 @@ const form = document.getElementById('form');
 const error = document.getElementById('error');
 const submit = document.getElementById('submit');
 let challenge = '';
+function decodeBase64url(value) {
+  const raw = atob(value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4));
+  return Uint8Array.from(raw, character => character.charCodeAt(0));
+}
+function encodeBase64url(value) {
+  const bytes = new Uint8Array(value);
+  let raw = '';
+  for (const byte of bytes) raw += String.fromCharCode(byte);
+  return btoa(raw).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
 if (!requestID || !/^[A-Za-z0-9._~-]{43,128}$/.test(requestID)) {
   error.textContent = 'Taskly からログインを開始してください。';
   form.hidden = true;
@@ -105,6 +115,41 @@ document.getElementById('send-code').addEventListener('click', async () => {
   if (!email) { error.textContent = 'メールアドレスを入力してください。'; return; }
   const {response} = await post('/auth/request-code', {email});
   error.textContent = response.ok ? 'メールコードを送信しました。' : 'コードを送信できませんでした。';
+});
+const passkeyButton = document.getElementById('passkey');
+if (passkeyButton) passkeyButton.addEventListener('click', async () => {
+  error.textContent = '';
+  const email = document.getElementById('email').value;
+  if (!email) { error.textContent = 'メールアドレスを入力してください。'; return; }
+  if (!navigator.credentials || !navigator.credentials.get) { error.textContent = 'このブラウザはパスキーに対応していません。'; return; }
+  passkeyButton.disabled = true;
+  try {
+    const begin = await post('/auth/passkey/begin', {email});
+    if (!begin.response.ok) throw new Error('begin failed');
+    const publicKey = begin.payload.options.publicKey;
+    publicKey.challenge = decodeBase64url(publicKey.challenge);
+    publicKey.allowCredentials = (publicKey.allowCredentials || []).map(item => ({...item, id: decodeBase64url(item.id)}));
+    const credential = await navigator.credentials.get({publicKey});
+    if (!credential) throw new Error('no credential');
+    const response = credential.response;
+    const finish = await post('/auth/passkey/finish', {
+      request_id: begin.payload.request_id,
+      credential: {
+        id: credential.id, rawId: encodeBase64url(credential.rawId), type: credential.type,
+        response: {
+          clientDataJSON: encodeBase64url(response.clientDataJSON),
+          authenticatorData: encodeBase64url(response.authenticatorData),
+          signature: encodeBase64url(response.signature),
+          userHandle: response.userHandle ? encodeBase64url(response.userHandle) : null
+        },
+        clientExtensionResults: credential.getClientExtensionResults()
+      }
+    });
+    if (!finish.response.ok) throw new Error('finish failed');
+    location.assign(api + '/oauth/authorize?request_id=' + encodeURIComponent(requestID));
+  } catch (_) {
+    error.textContent = 'パスキーで認証できませんでした。従来のログインも利用できます。';
+  } finally { passkeyButton.disabled = false; }
 });
 form.addEventListener('submit', async event => {
   event.preventDefault(); error.textContent = ''; submit.disabled = true;

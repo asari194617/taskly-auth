@@ -6,7 +6,7 @@
 
 2026-09-22 に認証 UI の公開予定ホストを `auth.taskly.iy0306.com` に変更する。従来の `taskly-auth.iy0306.com` は切り替え中に残し、認証 API の `taskly-auth-api.iy0306.com` は維持する。本番 Taskly の WebAuthn RP ID は実測で `taskly.iy0306.com`、旧画面の origin は `https://taskly.iy0306.com` だった。新 UI はこの RP ID のサブドメインなので、WebAuthn の登録・認証オプションに **同じ RP ID** を明示し、検証側で新 origin `https://auth.taskly.iy0306.com` を正確に許可すれば、既存クレデンシャルを再登録せずに利用できる可能性がある。RP ID を新ホスト名へ変更してはいけない。
 
-ホスト名と証明書の変更だけではパスキーログインは完成しない。認証サービスに WebAuthn の登録・認証処理、旧 `passkeys` 行の復号、ユーザー ID と署名カウンタの保持、ブロック判定を実装し、移行済みの実クレデンシャルで端末検証する。旧 API と新 API が同じパスキー行を別 DB で同時更新する期間は、カウンタや名前・削除の同期を決めるまで切り替えない。2026-09-22 の読み取り専用集計では有効ユーザー46件、パスキー保有者1件、パスキー以外に現行ログイン手段がないユーザー0件だった。
+ホスト名と証明書の変更だけではパスキーログインは完成しない。認証サービスに旧 `passkeys` 行を読み取る WebAuthn ログイン、旧ユーザー ID の保持、署名カウンタの更新、ブロック判定を実装した。新規パスキー登録・管理と、移行済みの実クレデンシャルを使った端末検証は未完了である。旧 API と新 API が同じパスキー行を別 DB で同時更新する期間は、カウンタや名前・削除の同期を決めるまで切り替えない。2026-09-22 の読み取り専用集計では有効ユーザー46件、パスキー保有者1件、パスキー以外に現行ログイン手段がないユーザー0件だった。
 
 ## DNS
 
@@ -45,7 +45,7 @@ curl https://auth.taskly.iy0306.com/login
 
 API は `issuer` が `https://taskly-auth-api.iy0306.com` の JSON、UI は認証画面を返すことを確認します。DNS レコードの Content は両方 `133.242.49.12` とし、別の Cloudflare ルートが割り込まないようにします。
 
-本番 OAuth 設定値は `AUTH_ISSUER=https://taskly-auth-api.iy0306.com`、`AUTH_UI_URL=https://auth.taskly.iy0306.com`、`OAUTH_REDIRECT_URI=https://api.taskly.iy0306.com/auth/oauth/callback`、Taskly 側の `WEB_PUBLIC_URL=https://taskly.iy0306.com` です。WebAuthn は `WEBAUTHN_RP_ID=taskly.iy0306.com` を維持し、`WEBAUTHN_ORIGIN=https://auth.taskly.iy0306.com` を正確に照合します。Taskly 側の本番環境設定は現行のリポジトリ直下 `.env.production` を暗号化してデプロイする方式であり、`apps/server/.env.production` ではありません。
+本番 OAuth 設定値は `AUTH_ISSUER=https://taskly-auth-api.iy0306.com`、`AUTH_UI_URL=https://auth.taskly.iy0306.com`、`OAUTH_REDIRECT_URI=https://api.taskly.iy0306.com/auth/oauth/callback`、Taskly 側の `WEB_PUBLIC_URL=https://taskly.iy0306.com` です。WebAuthn は `WEBAUTHN_RP_ID=taskly.iy0306.com` を維持し、検証 origin に `AUTH_UI_URL` の値を正確に使用します。Taskly 側の本番環境設定は現行のリポジトリ直下 `.env.production` を暗号化してデプロイする方式であり、`apps/server/.env.production` ではありません。
 
 ## 公開前のホスト内検証
 

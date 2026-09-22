@@ -58,6 +58,18 @@ login_url = response.headers["Location"]
 assert login_url.startswith(ui + "/login?"), login_url
 request_id = urllib.parse.parse_qs(urllib.parse.urlparse(login_url).query)["request_id"][0]
 
+response = request(login_url)
+assert response.status == 200, response.status
+assert b'id="passkey"' in response.read()
+try:
+    passkey_begin = opener.open(urllib.request.Request(
+        api + "/auth/passkey/begin", json.dumps({"email": email}).encode(),
+        {"Content-Type": "application/json", "Origin": ui, "X-Auth-UI": "1"},
+    ))
+except urllib.error.HTTPError as exc:
+    passkey_begin = exc
+assert passkey_begin.status == 401, passkey_begin.read()
+
 body = json.dumps({"email": email, "password": password}).encode()
 response = opener.open(urllib.request.Request(
     api + "/auth/login", body,

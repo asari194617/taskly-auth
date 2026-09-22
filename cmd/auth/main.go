@@ -11,6 +11,7 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 type app struct {
@@ -24,6 +25,7 @@ type app struct {
 	secure        bool
 	ready         bool
 	alerts        *alerter
+	webAuthn      *webauthn.WebAuthn
 }
 
 func env(key, fallback string) string {
@@ -71,6 +73,13 @@ func main() {
 	}
 	a.secure = strings.HasPrefix(a.issuer, "https://")
 	a.ready = env("NODE_ENV", "development") != "production" || os.Getenv("AUTH_MIGRATION_READY") == "1"
+	if rpID := os.Getenv("WEBAUTHN_RP_ID"); rpID != "" {
+		a.webAuthn, err = webauthn.New(&webauthn.Config{RPDisplayName: "Taskly", RPID: rpID, RPOrigins: []string{a.uiURL}})
+		if err != nil {
+			alerts.sendSync("Taskly auth startup failed: WebAuthn configuration invalid")
+			log.Fatal("WebAuthn configuration invalid: ", err)
+		}
+	}
 	if a.clientSecret == "" || a.redirectURI == "" {
 		alerts.sendSync("Taskly auth startup failed: OAuth configuration missing")
 		log.Fatal("OAUTH_CLIENT_SECRET and OAUTH_REDIRECT_URI are required")
@@ -98,6 +107,8 @@ func main() {
 	api.HandleFunc("POST /auth/login", a.login)
 	api.HandleFunc("POST /auth/logout", a.logout)
 	api.HandleFunc("POST /auth/request-code", a.requestCode)
+	api.HandleFunc("POST /auth/passkey/begin", a.passkeyBegin)
+	api.HandleFunc("POST /auth/passkey/finish", a.passkeyFinish)
 	ui := http.NewServeMux()
 	ui.HandleFunc("GET /healthz", a.health)
 	ui.HandleFunc("GET /login", a.loginPage)

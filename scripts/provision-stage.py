@@ -78,7 +78,8 @@ def main() -> None:
     variables = {
         "AUTH_DSN": f"{DB_USER}:{password}@tcp(infra-db-1:3306)/{DATABASE}?parseTime=true&charset=utf8mb4&loc=UTC",
         "AUTH_ISSUER": "https://taskly-auth-api.iy0306.com",
-        "AUTH_UI_URL": "https://taskly-auth.iy0306.com",
+        "AUTH_UI_URL": "https://auth.taskly.iy0306.com",
+        "WEBAUTHN_RP_ID": "taskly.iy0306.com",
         "OAUTH_CLIENT_ID": "taskly-web",
         "OAUTH_CLIENT_SECRET": client_secret,
         "OAUTH_REDIRECT_URI": "https://api.taskly.iy0306.com/auth/oauth/callback",

@@ -19,6 +19,6 @@ public client は `OAUTH_PUBLIC_CLIENTS_JSON` に `[{"client_id":"taskly-dev","r
 
 ## 現在の展開制約
 
-このリポジトリは段階導入用です。認証 UI の公開予定ホストは `auth.taskly.iy0306.com` で、旧パスキーの RP ID `taskly.iy0306.com` を維持できるサブドメインです。ただし WebAuthn ログイン処理は認証サービスに未実装であり、実クレデンシャルでの検証が必要です。また、プロフィール・パスワード・TOTP・復旧コード等の旧書き込み経路が残る間は二つの DB に差分が生じます。`migrate-auth` の `verify` モードは差分を読み取り専用で検出しますが、同期は行いません。Web ログアウトの連携は実装しましたが、公開環境では認証 UI 公開後に `PUBLIC_AUTH_LOGOUT_URL=https://auth.taskly.iy0306.com/logout` を設定する必要があります。native アプリとの実機接続も未完了です。パスキー認証、認証情報更新の所有権移管、増分同期・切り戻し手順の検証が終わるまで、本番ログインの一斉切り替えを行わないでください。
+このリポジトリは段階導入用です。認証 UI の公開予定ホストは `auth.taskly.iy0306.com` で、旧パスキーの RP ID `taskly.iy0306.com` を維持できるサブドメインです。旧保存形式を読み取る WebAuthn ログイン経路を追加しましたが、移行済みの実クレデンシャルでの検証と新規パスキー登録経路は未完了です。また、プロフィール・パスワード・TOTP・復旧コード等の旧書き込み経路が残る間は二つの DB に差分が生じます。`migrate-auth` の `verify` モードは差分を読み取り専用で検出しますが、同期は行いません。Web ログアウトの連携は実装しましたが、公開環境では認証 UI 公開後に `PUBLIC_AUTH_LOGOUT_URL=https://auth.taskly.iy0306.com/logout` を設定する必要があります。native アプリとの実機接続も未完了です。パスキー認証の端末検証、認証情報更新の所有権移管、増分同期・切り戻し手順の検証が終わるまで、本番ログインの一斉切り替えを行わないでください。
 
 設計と本番手順は [docs/production-migration.md](docs/production-migration.md) を参照してください。
