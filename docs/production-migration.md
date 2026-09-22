@@ -59,7 +59,9 @@ DB 接続・スキーマ・設定の起動失敗時は、Discord への送信が
 
 `scripts/provision-backup.py` は本番ホストで `taskly_auth` の読み取り専用 backup ユーザーと mode 0600 の `.env.backup` を一度だけ作る。既存 Airflow コンテナの MySQL 8.4 `mysqldump`、age recipient、FTPS 資格情報を再利用し、`scripts/run-backup.py` は認証 DB を `/opt/airflow/backups/taskly-auth` へ暗号化してから、既存の非公開 FTPS ディレクトリ内の `taskly-auth` サブディレクトリへ転送・ハッシュ照合する。既存アプリ DB と認証 DB のバックアップ保持・削除を分離するため、両ディレクトリを混ぜない。失敗時は認証サービス用 Discord webhook へ秘密値を含めず通知する。初回手動バックアップが成功した後、ホストの `ubuntu` ユーザーの cron に毎日 03:30 JST の `python3 /home/ubuntu/taskly-auth/scripts/run-backup.py` を登録する。Airflow コンテナが停止している場合はジョブが失敗して通知されるため、復旧後に再実行する。
 
-2026-09-21 に専用 backup ユーザーの権限を `taskly_auth` への `SELECT, SHOW VIEW, EVENT, TRIGGER` に限定し、mode 0600 の `.env.backup` を作成した。初回バックアップ `backup-20260921-133621.sql.gz.age` は専用 FTPS ディレクトリへ転送され、再取得後のサイズと SHA-256 が一致した。ホストの JST 03:30 の cron 登録も確認した。暗号化ファイルを別のローカル MySQL 8.4 コンテナへ復号し、SQL を最後まで投入した。元DBと復元先はいずれも9テーブル、ユーザー0件、OAuthトークン0件だった。検証コンテナとローカルの復号鍵コピーは試験後に削除した。実ユーザーを移した後の復元・件数照合と、失敗通知の障害注入は未実施なので、バックアップの運用ゲートはまだ完了していない。
+2026-09-21 に専用 backup ユーザーの権限を `taskly_auth` への `SELECT, SHOW VIEW, EVENT, TRIGGER` に限定し、mode 0600 の `.env.backup` を作成した。初回バックアップ `backup-20260921-133621.sql.gz.age` は専用 FTPS ディレクトリへ転送され、再取得後のサイズと SHA-256 が一致した。ホストの JST 03:30 の cron 登録も確認した。暗号化ファイルを別のローカル MySQL 8.4 コンテナへ復号し、SQL を最後まで投入した。元DBと復元先はいずれも9テーブル、ユーザー0件、OAuthトークン0件だった。検証コンテナとローカルの復号鍵コピーは試験後に削除した。
+
+2026-09-22 JST 03:30 の定期ジョブでも `backup-20260921-183007.sql.gz.age` が作成され、FTPS への転送とハッシュ照合が成功した。同日、ホスト上の一時ディレクトリにスクリプトをコピーし、backup 設定ファイルが欠落する障害を注入した。スクリプトは終了コード1を返し、Discord 通知の送信エラーは発生しなかった。本番の `.env.backup` と cron は変更していない。実ユーザー移行後の復元・件数照合は引き続き必要である。
 4. 新 DB と専用ユーザーを作成します。`taskly_auth` への権限だけを付与します。Taskly の既存 DB ユーザーに認証 DB の権限を付与しません。
 5. 既存ログインを維持した状態で、開発/ステージング環境でコピーと照合を完走します。
 
