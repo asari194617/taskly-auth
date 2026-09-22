@@ -108,6 +108,8 @@ func main() {
 	api.HandleFunc("POST /auth/logout", a.logout)
 	api.HandleFunc("GET /auth/password/status", a.passwordStatus)
 	api.HandleFunc("POST /auth/password", a.changePassword)
+	api.HandleFunc("GET /auth/email-code/settings", a.emailCodeSettings)
+	api.HandleFunc("POST /auth/email-code/settings", a.updateEmailCodeSettings)
 	api.HandleFunc("POST /auth/request-code", a.requestCode)
 	api.HandleFunc("POST /auth/passkey/begin", a.passkeyBegin)
 	api.HandleFunc("POST /auth/passkey/finish", a.passkeyFinish)

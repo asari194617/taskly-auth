@@ -77,6 +77,7 @@ passkey_begin = ui_json_request("/auth/passkey/begin", {"email": email})
 assert passkey_begin.status == 401, passkey_begin.read()
 assert ui_json_request("/auth/passkeys").status == 401
 assert ui_json_request("/auth/passkey/register/begin", {}).status == 401
+assert ui_json_request("/auth/email-code/settings").status == 401
 
 body = json.dumps({"email": email, "password": password}).encode()
 response = opener.open(urllib.request.Request(
@@ -200,6 +201,14 @@ if public_client_id and public_redirect_uri:
 response = request(ui + "/security")
 assert response.status == 200
 assert b"/security.js" in response.read()
+response = ui_json_request("/auth/email-code/settings")
+assert response.status == 200
+assert json.load(response)["enabled"] is False
+assert ui_json_request("/auth/email-code/settings", {}).status == 400
+assert ui_json_request("/auth/email-code/settings", {"enabled": True}).status == 204
+assert json.load(ui_json_request("/auth/email-code/settings"))["enabled"] is True
+assert ui_json_request("/auth/email-code/settings", {"enabled": False}).status == 204
+assert json.load(ui_json_request("/auth/email-code/settings"))["enabled"] is False
 response = ui_json_request("/auth/password/status")
 assert response.status == 200
 assert json.load(response)["has_password"] is True

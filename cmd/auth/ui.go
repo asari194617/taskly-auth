@@ -43,9 +43,12 @@ var passkeysTemplate = template.Must(template.New("passkeys").Parse(`<!doctype h
 
 var securityTemplate = template.Must(template.New("security").Parse(`<!doctype html>
 <html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="api-base" content="{{.API}}"><title>Taskly パスワード管理</title>
-<style>body{font:16px system-ui,sans-serif;background:#f6f8fb;color:#17202c;margin:0}main{max-width:480px;margin:8vh auto;padding:28px;background:white;border-radius:12px;box-shadow:0 8px 30px #15243a16}h1{font-size:1.5rem}label{display:block;margin:16px 0 6px}input{box-sizing:border-box;width:100%;padding:12px;font:inherit;border:1px solid #aeb8c5;border-radius:6px}button{font:inherit;background:#185db6;color:white;border:0;border-radius:6px;padding:12px 18px;margin-top:18px;cursor:pointer}button:disabled{opacity:.6}#error{color:#ad2020;min-height:1.5em}a{color:#185db6}</style>
-</head><body><main><h1>パスワードを管理</h1><p id="error" role="alert"></p><p id="notice" role="status"></p>
+<meta name="api-base" content="{{.API}}"><title>Taskly 認証設定</title>
+<style>body{font:16px system-ui,sans-serif;background:#f6f8fb;color:#17202c;margin:0}main{max-width:480px;margin:8vh auto;padding:28px;background:white;border-radius:12px;box-shadow:0 8px 30px #15243a16}h1{font-size:1.5rem}label{display:block;margin:16px 0 6px}input{box-sizing:border-box;width:100%;padding:12px;font:inherit;border:1px solid #aeb8c5;border-radius:6px}input[type=checkbox]{width:auto}button{font:inherit;background:#185db6;color:white;border:0;border-radius:6px;padding:12px 18px;margin-top:18px;cursor:pointer}button:disabled{opacity:.6}#error{color:#ad2020;min-height:1.5em}a{color:#185db6}</style>
+</head><body><main><h1>認証設定</h1><p id="error" role="alert"></p><p id="notice" role="status"></p>
+<section id="email-section" hidden><h2>メールコード</h2><p>無効にするにはパスワードかパスキーが必要です。</p>
+<form id="email-form"><label><input id="email-enabled" type="checkbox"> メールコードを使う</label><button id="email-submit" type="submit">メールコード設定を保存</button></form></section>
+<h2>パスワード</h2>
 <form id="form" hidden><div id="current-field"><label for="current">現在のパスワード</label><input id="current" type="password" autocomplete="current-password"></div>
 <label for="next">新しいパスワード（8文字以上）</label><input id="next" type="password" autocomplete="new-password" required minlength="8">
 <button id="submit" type="submit">更新する</button></form><p><a id="login-again" href="/login?next=security" hidden>ログインし直す</a></p><p><a href="/passkeys">パスキーを管理</a></p>
@@ -85,6 +88,8 @@ const error = document.getElementById('error');
 const notice = document.getElementById('notice');
 const form = document.getElementById('form');
 const submit = document.getElementById('submit');
+const emailForm = document.getElementById('email-form');
+const emailSubmit = document.getElementById('email-submit');
 async function request(path, body) {
   const response = await fetch(api + path, {
     method: body === undefined ? 'GET' : 'POST', credentials: 'include',
@@ -107,6 +112,32 @@ async function loadStatus() {
     form.hidden = false;
   } catch (_) { error.textContent = 'パスワード設定を読み込めませんでした。'; }
 }
+async function loadEmailSettings() {
+  try {
+    const response = await request('/auth/email-code/settings');
+    if (!response) return;
+    if (!response.ok) throw new Error('status');
+    const settings = await response.json();
+    document.getElementById('email-enabled').checked = settings.enabled;
+    document.getElementById('email-section').hidden = false;
+  } catch (_) { error.textContent = 'メールコード設定を読み込めませんでした。'; }
+}
+emailForm.addEventListener('submit', async event => {
+  event.preventDefault(); error.textContent = ''; notice.textContent = ''; emailSubmit.disabled = true;
+  try {
+    const response = await request('/auth/email-code/settings', {enabled: document.getElementById('email-enabled').checked});
+    if (response.status === 401 && (await response.json()).error === 'login_required') {
+      location.assign('/login?next=security'); return;
+    }
+    if (!response.ok) {
+      await loadEmailSettings();
+      error.textContent = '設定を更新できませんでした。メールコードを無効にするにはパスワードかパスキーが必要です。';
+      return;
+    }
+    notice.textContent = 'メールコード設定を更新しました。';
+  } catch (_) { error.textContent = '通信に失敗しました。'; }
+  finally { emailSubmit.disabled = false; }
+});
 form.addEventListener('submit', async event => {
   event.preventDefault(); error.textContent = ''; notice.textContent = ''; submit.disabled = true;
   try {
@@ -125,6 +156,7 @@ form.addEventListener('submit', async event => {
   finally { submit.disabled = false; }
 });
 loadStatus();
+loadEmailSettings();
 `
 
 var logoutTemplate = template.Must(template.New("logout").Parse(`<!doctype html>
