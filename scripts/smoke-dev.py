@@ -44,6 +44,18 @@ def token_request(body):
     return request(api + "/oauth/token", body, {"Authorization": "Basic " + basic})
 
 
+def ui_json_request(path, body=None):
+    data = None if body is None else json.dumps(body).encode()
+    headers = {"Origin": ui, "X-Auth-UI": "1"}
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(api + path, data, headers)
+    try:
+        return opener.open(req)
+    except urllib.error.HTTPError as exc:
+        return exc
+
+
 verifier = secrets.token_urlsafe(32)
 challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
 state = secrets.token_urlsafe(32)
@@ -61,14 +73,10 @@ request_id = urllib.parse.parse_qs(urllib.parse.urlparse(login_url).query)["requ
 response = request(login_url)
 assert response.status == 200, response.status
 assert b'id="passkey"' in response.read()
-try:
-    passkey_begin = opener.open(urllib.request.Request(
-        api + "/auth/passkey/begin", json.dumps({"email": email}).encode(),
-        {"Content-Type": "application/json", "Origin": ui, "X-Auth-UI": "1"},
-    ))
-except urllib.error.HTTPError as exc:
-    passkey_begin = exc
+passkey_begin = ui_json_request("/auth/passkey/begin", {"email": email})
 assert passkey_begin.status == 401, passkey_begin.read()
+assert ui_json_request("/auth/passkeys").status == 401
+assert ui_json_request("/auth/passkey/register/begin", {}).status == 401
 
 body = json.dumps({"email": email, "password": password}).encode()
 response = opener.open(urllib.request.Request(
@@ -76,6 +84,25 @@ response = opener.open(urllib.request.Request(
     {"Content-Type": "application/json", "Origin": ui, "X-Auth-UI": "1"},
 ))
 assert response.status == 200, response.status
+
+response = request(ui + "/passkeys")
+assert response.status == 200, response.status
+assert b"/passkeys.js" in response.read()
+response = ui_json_request("/auth/passkeys")
+assert response.status == 200, response.read()
+assert json.load(response)["passkeys"] == []
+response = ui_json_request("/auth/passkey/register/begin", {})
+assert response.status == 200, response.read()
+registration = json.load(response)
+assert registration["options"]["publicKey"]["rp"]["id"] == "localhost"
+assert registration["options"]["publicKey"]["challenge"]
+assert len(registration["request_id"]) >= 43
+response = ui_json_request("/auth/passkey/register/finish", {
+    "request_id": registration["request_id"],
+    "credential": {"id": "invalid", "rawId": "aW52YWxpZA", "type": "public-key", "response": {}},
+})
+assert response.status == 401, response.read()
+assert json.load(ui_json_request("/auth/passkeys"))["passkeys"] == []
 
 response = request(api + "/oauth/authorize?request_id=" + urllib.parse.quote(request_id))
 assert response.status == 302, response.status

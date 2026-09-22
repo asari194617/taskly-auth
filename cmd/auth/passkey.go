@@ -18,6 +18,7 @@ import (
 type passkeyResponse struct {
 	RequestID  string          `json:"request_id"`
 	Credential json.RawMessage `json:"credential"`
+	DeviceName string          `json:"device_name,omitempty"`
 }
 
 func parsePasskeyResponse(w http.ResponseWriter, r *http.Request, dst *passkeyResponse) bool {

@@ -68,4 +68,15 @@ func TestExistingPasskeyRequestKeepsParentRPID(t *testing.T) {
 	if len(assertion.Response.AllowedCredentials) != 1 || !bytes.Equal(assertion.Response.AllowedCredentials[0].CredentialID, []byte("old-passkey")) {
 		t.Fatalf("old passkey not offered: %+v", assertion.Response.AllowedCredentials)
 	}
+	creation, _, err := service.BeginRegistration(user, webauthn.WithExclusions(webauthn.Credentials(user.WebAuthnCredentials()).CredentialDescriptors()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	userHandle, ok := creation.Response.User.ID.(protocol.URLEncodedBase64)
+	if creation.Response.RelyingParty.ID != "taskly.iy0306.com" || !ok || !bytes.Equal(userHandle, []byte("42")) {
+		t.Fatalf("new passkey registration changed RP or user handle: %+v", creation.Response)
+	}
+	if len(creation.Response.CredentialExcludeList) != 1 || !bytes.Equal(creation.Response.CredentialExcludeList[0].CredentialID, []byte("old-passkey")) {
+		t.Fatalf("old passkey not excluded during registration: %+v", creation.Response.CredentialExcludeList)
+	}
 }

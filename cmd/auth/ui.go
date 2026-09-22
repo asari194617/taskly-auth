@@ -16,7 +16,7 @@ var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html>
 <div id="secondary"><label for="code">メールコード</label><input id="code" inputmode="numeric" autocomplete="one-time-code"><button id="send-code" type="button">メールコードを送信</button>
 <label for="totp">認証アプリのコード</label><input id="totp" inputmode="numeric" autocomplete="one-time-code">
 <label for="recovery">復旧コード</label><input id="recovery" autocomplete="off"></div>
-<button id="submit" type="submit">ログイン</button>{{if .Passkeys}} <button id="passkey" type="button">パスキーでログイン</button>{{end}}</form><p>認証できない場合は <a href="{{.Legacy}}">従来のログイン画面</a> を利用できます。</p></main><script src="/login.js" defer></script></body></html>`))
+<button id="submit" type="submit">ログイン</button>{{if .Passkeys}} <button id="passkey" type="button">パスキーでログイン</button>{{end}}</form><p><a href="/passkeys">パスキーを管理</a></p><p>認証できない場合は <a href="{{.Legacy}}">従来のログイン画面</a> を利用できます。</p></main><script src="/login.js" defer></script></body></html>`))
 
 func (a *app) loginPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -31,6 +31,28 @@ func (a *app) loginJS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Write([]byte(loginJavaScript))
+}
+
+var passkeysTemplate = template.Must(template.New("passkeys").Parse(`<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="api-base" content="{{.API}}"><title>Taskly パスキー管理</title>
+<style>body{font:16px system-ui,sans-serif;background:#f6f8fb;color:#17202c;margin:0}main{max-width:560px;margin:8vh auto;padding:28px;background:white;border-radius:12px;box-shadow:0 8px 30px #15243a16}h1{font-size:1.5rem}button{font:inherit;background:#185db6;color:white;border:0;border-radius:6px;padding:10px 16px;cursor:pointer}button:disabled{opacity:.6}li{margin:14px 0}li button{margin-left:8px}#error{color:#ad2020;min-height:1.5em}#notice{min-height:1.5em}a{color:#185db6}</style>
+</head><body><main><h1>パスキーを管理</h1><p id="error" role="alert"></p><p id="notice" role="status"></p>
+<ul id="keys"></ul><button id="register" type="button">パスキーを登録</button><p><a href="{{.Legacy}}">Taskly に戻る</a></p>
+</main><script src="/passkeys.js" defer></script></body></html>`))
+
+func (a *app) passkeysPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src "+a.issuer+"; base-uri 'none'; form-action 'none'")
+	_ = passkeysTemplate.Execute(w, map[string]string{"API": a.issuer, "Legacy": env("LEGACY_LOGIN_URL", "https://taskly.iy0306.com/login")})
+}
+
+func (a *app) passkeysJS(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Write([]byte(passkeysJavaScript))
 }
 
 var logoutTemplate = template.Must(template.New("logout").Parse(`<!doctype html>
@@ -81,6 +103,7 @@ finishLogout();
 const loginJavaScript = `
 const api = document.querySelector('meta[name="api-base"]').content;
 const requestID = new URLSearchParams(location.search).get('request_id');
+const managementLogin = !requestID && new URLSearchParams(location.search).get('next') === 'passkeys';
 const form = document.getElementById('form');
 const error = document.getElementById('error');
 const submit = document.getElementById('submit');
@@ -95,9 +118,12 @@ function encodeBase64url(value) {
   for (const byte of bytes) raw += String.fromCharCode(byte);
   return btoa(raw).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
-if (!requestID || !/^[A-Za-z0-9._~-]{43,128}$/.test(requestID)) {
+if (!managementLogin && (!requestID || !/^[A-Za-z0-9._~-]{43,128}$/.test(requestID))) {
   error.textContent = 'Taskly からログインを開始してください。';
   form.hidden = true;
+}
+function afterLogin() {
+  location.assign(managementLogin ? '/passkeys' : api + '/oauth/authorize?request_id=' + encodeURIComponent(requestID));
 }
 async function post(path, body) {
   const response = await fetch(api + path, {
@@ -146,7 +172,7 @@ if (passkeyButton) passkeyButton.addEventListener('click', async () => {
       }
     });
     if (!finish.response.ok) throw new Error('finish failed');
-    location.assign(api + '/oauth/authorize?request_id=' + encodeURIComponent(requestID));
+    afterLogin();
   } catch (_) {
     error.textContent = 'パスキーで認証できませんでした。従来のログインも利用できます。';
   } finally { passkeyButton.disabled = false; }
@@ -173,8 +199,105 @@ form.addEventListener('submit', async event => {
       return;
     }
     if (!response.ok) { error.textContent = '認証できませんでした。入力内容を確認してください。'; return; }
-    location.assign(api + '/oauth/authorize?request_id=' + encodeURIComponent(requestID));
+    afterLogin();
   } catch (_) { error.textContent = '通信に失敗しました。'; }
   finally { submit.disabled = false; }
 });
+`
+
+const passkeysJavaScript = `
+const api = document.querySelector('meta[name="api-base"]').content;
+const keys = document.getElementById('keys');
+const error = document.getElementById('error');
+const notice = document.getElementById('notice');
+const register = document.getElementById('register');
+function decodeBase64url(value) {
+  const raw = atob(value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4));
+  return Uint8Array.from(raw, character => character.charCodeAt(0));
+}
+function encodeBase64url(value) {
+  const bytes = new Uint8Array(value);
+  let raw = '';
+  for (const byte of bytes) raw += String.fromCharCode(byte);
+  return btoa(raw).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+async function request(path, body) {
+  const response = await fetch(api + path, {
+    method: body === undefined ? 'GET' : 'POST', credentials: 'include',
+    headers: {'X-Auth-UI': '1', ...(body === undefined ? {} : {'Content-Type': 'application/json'})},
+    ...(body === undefined ? {} : {body: JSON.stringify(body)})
+  });
+  if (response.status === 401) {
+    location.assign('/login?next=passkeys');
+    throw new Error('login required');
+  }
+  let payload = {};
+  try { payload = await response.json(); } catch (_) {}
+  if (!response.ok) throw new Error(payload.error || 'request failed');
+  return payload;
+}
+async function loadKeys() {
+  const result = await request('/auth/passkeys');
+  keys.replaceChildren();
+  for (const key of result.passkeys) {
+    const item = document.createElement('li');
+    item.textContent = key.device_name + ' (' + key.created_at + ')';
+    const rename = document.createElement('button');
+    rename.type = 'button'; rename.textContent = '名前を変更';
+    rename.addEventListener('click', async () => {
+      const name = prompt('新しい名前', key.device_name);
+      if (name === null) return;
+      error.textContent = '';
+      try { await request('/auth/passkey/rename', {id: key.id, name}); await loadKeys(); }
+      catch (_) { error.textContent = '名前を変更できませんでした。'; }
+    });
+    const remove = document.createElement('button');
+    remove.type = 'button'; remove.textContent = '削除';
+    remove.addEventListener('click', async () => {
+      if (!confirm('このパスキーを削除しますか？')) return;
+      error.textContent = '';
+      try { await request('/auth/passkey/delete', {id: key.id}); await loadKeys(); }
+      catch (_) { error.textContent = '削除できませんでした。最後のログイン手段は削除できません。'; }
+    });
+    item.append(rename, remove); keys.append(item);
+  }
+  if (result.passkeys.length === 0) {
+    const item = document.createElement('li'); item.textContent = '登録済みのパスキーはありません。'; keys.append(item);
+  }
+}
+register.addEventListener('click', async () => {
+  error.textContent = ''; notice.textContent = '';
+  if (!navigator.credentials || !navigator.credentials.create) {
+    error.textContent = 'このブラウザはパスキーに対応していません。'; return;
+  }
+  const name = prompt('パスキーの名前', 'Passkey');
+  if (name === null) return;
+  register.disabled = true;
+  try {
+    const begin = await request('/auth/passkey/register/begin', {});
+    const publicKey = begin.options.publicKey;
+    publicKey.challenge = decodeBase64url(publicKey.challenge);
+    publicKey.user.id = decodeBase64url(publicKey.user.id);
+    publicKey.excludeCredentials = (publicKey.excludeCredentials || []).map(item => ({...item, id: decodeBase64url(item.id)}));
+    const credential = await navigator.credentials.create({publicKey});
+    if (!credential) throw new Error('no credential');
+    const response = credential.response;
+    await request('/auth/passkey/register/finish', {
+      request_id: begin.request_id, device_name: name,
+      credential: {
+        id: credential.id, rawId: encodeBase64url(credential.rawId), type: credential.type,
+        response: {
+          attestationObject: encodeBase64url(response.attestationObject),
+          clientDataJSON: encodeBase64url(response.clientDataJSON),
+          transports: response.getTransports ? response.getTransports() : []
+        },
+        clientExtensionResults: credential.getClientExtensionResults()
+      }
+    });
+    notice.textContent = 'パスキーを登録しました。';
+    await loadKeys();
+  } catch (_) { error.textContent = 'パスキーを登録できませんでした。再ログインしてからお試しください。'; }
+  finally { register.disabled = false; }
+});
+loadKeys().catch(() => { error.textContent = 'パスキーを読み込めませんでした。'; });
 `

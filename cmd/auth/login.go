@@ -247,7 +247,7 @@ func (a *app) finishLogin(w http.ResponseWriter, r *http.Request, id uint64) {
 		return
 	}
 	expires := time.Now().UTC().Add(12 * time.Hour)
-	_, err = a.db.ExecContext(r.Context(), `INSERT INTO auth_sessions (token_hash,user_id,expires_at) VALUES (?,?,?)`, digest(token), id, expires)
+	_, err = a.db.ExecContext(r.Context(), `INSERT INTO auth_sessions (token_hash,user_id,expires_at,created_at) VALUES (?,?,?,?)`, digest(token), id, expires, time.Now().UTC())
 	if err != nil {
 		oauthError(w, 500, "server_error")
 		a.alerts.send("Taskly auth session storage failed")

@@ -390,12 +390,24 @@ func (a *app) subjectActive(ctx context.Context, id uint64) bool {
 }
 
 func (a *app) sessionUser(r *http.Request) (uint64, bool) {
+	return a.sessionUserWithFreshness(r, false)
+}
+
+func (a *app) recentSessionUser(r *http.Request) (uint64, bool) {
+	return a.sessionUserWithFreshness(r, true)
+}
+
+func (a *app) sessionUserWithFreshness(r *http.Request, recent bool) (uint64, bool) {
 	cookie, err := r.Cookie("taskly_auth_session")
 	if err != nil || cookie.Value == "" {
 		return 0, false
 	}
 	jst := time.Now().In(time.FixedZone("JST", 9*3600))
-	id, err := scanUserID(a.db.QueryRowContext(r.Context(), `SELECT s.user_id FROM auth_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>UTC_TIMESTAMP() AND u.is_deleted=0 AND NOT EXISTS (SELECT 1 FROM blocks b WHERE b.user_id=u.id AND (b.expires_at IS NULL OR b.expires_at>?))`, digest(cookie.Value), jst))
+	query := `SELECT s.user_id FROM auth_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>UTC_TIMESTAMP() AND u.is_deleted=0 AND NOT EXISTS (SELECT 1 FROM blocks b WHERE b.user_id=u.id AND (b.expires_at IS NULL OR b.expires_at>?))`
+	if recent {
+		query += ` AND s.created_at>UTC_TIMESTAMP()-INTERVAL 10 MINUTE`
+	}
+	id, err := scanUserID(a.db.QueryRowContext(r.Context(), query, digest(cookie.Value), jst))
 	return id, err == nil
 }
 
