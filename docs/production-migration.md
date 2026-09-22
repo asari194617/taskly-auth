@@ -127,6 +127,8 @@ docker run --rm --read-only --network infra_default \
 いずれかが未達なら、本番のログイン経路を切り替えず、旧 DB の認証行も削除しません。
 本番モードの認証 API は `AUTH_MIGRATION_READY=1` を明示するまで `/auth/*` と `/oauth/*` に 503 を返します。内部ステージングでは常に `0` に固定し、全ゲートが満たされるまで公開用 Compose に `1` を渡しません。
 
+2026-09-22 にパスワード管理を含むイメージ `5d466568ea72064837aba6c5d182eda8aeab9cbf` を内部ステージングへ配置した。Docker の health は healthy、内部 `/healthz` は200、`/security` は200、`/auth/password/status` は移行ゲートにより503。DB の読み取り専用件数は旧 `taskly.users` 47、新 `taskly_auth.users` 0。公開 `https://auth.taskly.iy0306.com/security` と `https://taskly-auth-api.iy0306.com/oauth/authorize` は証明書検証成功の503であり、ユーザー認証はまだ公開していない。
+
 ## ロールバック
 
 Taskly Web の OAuth リンクを非表示にし、旧ログインを維持します。新認証 DB 側で行われたパスワード変更、復旧コード消費、TOTP 設定、メールログイン設定などがあれば、旧 DB に安全に反映してから旧方式を正本に戻します。source と target のバックアップを保持し、単純な上書き復元で新しい更新を失わないようにします。

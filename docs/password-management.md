@@ -1,6 +1,6 @@
 # パスワード管理仕様
 
-Status: implementation in progress; production migration gate remains closed (2026-09-22)
+Status: implemented and verified in development CI; production migration gate remains closed (2026-09-22)
 
 ## 目的
 
@@ -18,3 +18,5 @@ Status: implementation in progress; production migration gate remains closed (20
 ## 切り替え条件
 
 本番 `AUTH_MIGRATION_READY=0` では全 API が503。旧 GraphQL `setPassword` と REST 設定更新が旧 DB に書く間は、auth DB に実ユーザーを最終コピーして公開しない。旧書き込み停止、データ照合、Taskly 設定画面からの導線、切り戻し時の新ハッシュ反映を別途確認する。
+
+開発 CI は既存パスワードの誤入力拒否、変更後の旧パスワード拒否と新パスワード受理、アクセス・リフレッシュトークンと UI セッションの失効、元のパスワードへの復元を MySQL 上で確認した。内部ステージングは移行ゲートを閉じたままのため、実ユーザーでの操作は未実施。
