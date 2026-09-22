@@ -219,6 +219,18 @@ func copyTable(ctx context.Context, source sourceReader, target *sql.DB, table s
 	if err != nil {
 		return err
 	}
+	targetRows, err := target.QueryContext(ctx, "SELECT * FROM `"+table+"` LIMIT 0")
+	if err != nil {
+		return fmt.Errorf("target schema: %w", err)
+	}
+	targetColumns, err := targetRows.Columns()
+	targetRows.Close()
+	if err != nil {
+		return fmt.Errorf("target schema: %w", err)
+	}
+	if !sameColumns(columns, targetColumns) {
+		return fmt.Errorf("source and target columns differ; update the empty target schema before copying %s (source=%v target=%v)", table, columns, targetColumns)
+	}
 	quoted := make([]string, len(columns))
 	placeholders := make([]string, len(columns))
 	for i, col := range columns {
@@ -276,6 +288,18 @@ func copyTable(ctx context.Context, source sourceReader, target *sql.DB, table s
 	}
 	log.Printf("%s: %d rows verified sha256=%s", table, copied, sHash)
 	return nil
+}
+
+func sameColumns(source, target []string) bool {
+	if len(source) != len(target) {
+		return false
+	}
+	for i := range source {
+		if source[i] != target[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func fingerprint(ctx context.Context, db sourceReader, table string) (int64, string, error) {
