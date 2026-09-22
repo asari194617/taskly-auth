@@ -2,16 +2,23 @@
 
 この文書は 2026-09-21 の本番構成に基づきます。Taskly は `infra-db-1` (MySQL 8.4) を使い、認証 API を配置するホストは `133.242.49.12` です。ホストの空きメモリは限られるため、認証 DB は同じ MySQL インスタンス上の別 database として作成し、専用ユーザーと権限で分離します。別 MySQL インスタンスにする場合は容量計画と移行手順を改めて確認します。
 
+## 認証 UI の新ホスト名と既存パスキー
+
+2026-09-22 に認証 UI の公開予定ホストを `auth.taskly.iy0306.com` に変更する。従来の `taskly-auth.iy0306.com` は切り替え中に残し、認証 API の `taskly-auth-api.iy0306.com` は維持する。本番 Taskly の WebAuthn RP ID は実測で `taskly.iy0306.com`、旧画面の origin は `https://taskly.iy0306.com` だった。新 UI はこの RP ID のサブドメインなので、WebAuthn の登録・認証オプションに **同じ RP ID** を明示し、検証側で新 origin `https://auth.taskly.iy0306.com` を正確に許可すれば、既存クレデンシャルを再登録せずに利用できる可能性がある。RP ID を新ホスト名へ変更してはいけない。
+
+ホスト名と証明書の変更だけではパスキーログインは完成しない。認証サービスに WebAuthn の登録・認証処理、旧 `passkeys` 行の復号、ユーザー ID と署名カウンタの保持、ブロック判定を実装し、移行済みの実クレデンシャルで端末検証する。旧 API と新 API が同じパスキー行を別 DB で同時更新する期間は、カウンタや名前・削除の同期を決めるまで切り替えない。2026-09-22 の読み取り専用集計では有効ユーザー46件、パスキー保有者1件、パスキー以外に現行ログイン手段がないユーザー0件だった。
+
 ## DNS
 
-Cloudflare の DNS で以下を設定します。証明書発行時は DNS only とし、認証サービスの公開検証後に Cloudflare proxy を使う場合は Full (strict) にします。
+Cloudflare の DNS で以下を設定します。証明書発行時は DNS only とし、認証サービスの公開検証後に Cloudflare proxy を使う場合は Full (strict) にします。公開予定の UI は `auth.taskly`、`taskly-auth` は旧予定ホストとして503のまま維持します。
 
 | Type | Name | Content | Proxy status | TTL |
 | --- | --- | --- | --- | --- |
 | A | `taskly-auth` | `133.242.49.12` | DNS only | Auto |
 | A | `taskly-auth-api` | `133.242.49.12` | DNS only | Auto |
+| A | `auth.taskly` | `133.242.49.12` | DNS only | Auto |
 
-両ホストの Nginx vhost は `deploy/nginx/` に保存します。UI は `127.0.0.1:3068`、API は `127.0.0.1:3067` に proxy し、HTTP は HTTPS にリダイレクトします。バックエンドが不在の間は 503 と `Retry-After` を返します。OAuth の移行ゲートが整うまで本番 OAuth redirect は有効にしません。
+各ホストの Nginx vhost は `deploy/nginx/` に保存します。切り替え後は UI を `127.0.0.1:3068`、API を `127.0.0.1:3067` に proxy します。新 UI ホストは切り替え前に明示的な503と `Retry-After` を返し、HTTP は HTTPS にリダイレクトします。OAuth の移行ゲートが整うまで本番 OAuth redirect は有効にしません。
 
 ### 公開先の確認 (2026-09-21)
 
@@ -21,6 +28,8 @@ DNS 登録後、両ホストの A 応答は Cloudflare の proxy IP になり、
 
 同日、両 Nginx vhost を本番ホストに配置し、既存の Certbot アカウントで両ホスト名を含む Let's Encrypt 証明書を発行しました。有効期限は 2026-12-20 です。`nginx -t`、HTTP → HTTPS の 301、両ホストの証明書検証、Certbot 更新の dry run が成功しました。HTTPS は現在 503 を返します。内部ステージングコンテナは稼働していますが、公開ポートには接続していません。証明書と入口は整いましたが、本番切り替えは未完了です。
 
+2026-09-22 に追加された `auth.taskly.iy0306.com` の A レコードが `1.1.1.1` と `8.8.8.8` から `133.242.49.12` を返すことを確認した。同ホスト専用の Nginx vhost と Let's Encrypt 証明書を配置した。証明書は 2026-12-21 まで有効で、Certbot の更新 dry run、`nginx -t`、HTTP 301、証明書検証付きの HTTPS 503、オリジン直結の HTTPS 503 が成功した。新ホストは公開ポートの認証コンテナへ接続せず、明示的な503ゲートを維持している。
+
 認証コンテナの配置後、オリジンと Cloudflare 経由の双方で以下を確認します。証明書が一致しない場合は `-k` で検査を通さず、証明書と vhost を修正してから再試行します。
 
 ```sh
@@ -28,13 +37,15 @@ curl --resolve taskly-auth-api.iy0306.com:443:133.242.49.12 \
   https://taskly-auth-api.iy0306.com/.well-known/oauth-authorization-server
 curl --resolve taskly-auth.iy0306.com:443:133.242.49.12 \
   https://taskly-auth.iy0306.com/login
+curl --resolve auth.taskly.iy0306.com:443:133.242.49.12 \
+  https://auth.taskly.iy0306.com/login
 curl https://taskly-auth-api.iy0306.com/.well-known/oauth-authorization-server
-curl https://taskly-auth.iy0306.com/login
+curl https://auth.taskly.iy0306.com/login
 ```
 
 API は `issuer` が `https://taskly-auth-api.iy0306.com` の JSON、UI は認証画面を返すことを確認します。DNS レコードの Content は両方 `133.242.49.12` とし、別の Cloudflare ルートが割り込まないようにします。
 
-本番 OAuth 設定値は `AUTH_ISSUER=https://taskly-auth-api.iy0306.com`、`AUTH_UI_URL=https://taskly-auth.iy0306.com`、`OAUTH_REDIRECT_URI=https://api.taskly.iy0306.com/auth/oauth/callback`、Taskly 側の `WEB_PUBLIC_URL=https://taskly.iy0306.com` です。Taskly 側の本番環境設定は現行のリポジトリ直下 `.env.production` を暗号化してデプロイする方式であり、`apps/server/.env.production` ではありません。
+本番 OAuth 設定値は `AUTH_ISSUER=https://taskly-auth-api.iy0306.com`、`AUTH_UI_URL=https://auth.taskly.iy0306.com`、`OAUTH_REDIRECT_URI=https://api.taskly.iy0306.com/auth/oauth/callback`、Taskly 側の `WEB_PUBLIC_URL=https://taskly.iy0306.com` です。WebAuthn は `WEBAUTHN_RP_ID=taskly.iy0306.com` を維持し、`WEBAUTHN_ORIGIN=https://auth.taskly.iy0306.com` を正確に照合します。Taskly 側の本番環境設定は現行のリポジトリ直下 `.env.production` を暗号化してデプロイする方式であり、`apps/server/.env.production` ではありません。
 
 ## 公開前のホスト内検証
 
@@ -100,7 +111,7 @@ docker run --rm --read-only --network infra_default \
 切り替え前に以下を実証します。
 
 - ユーザー ID、件数、ハッシュ、パスワード認証、メールコード、TOTP、復旧コード、ブロック判定を照合する。
-- 旧 RP ID のパスキー利用者がログインでき、対象ユーザーが新 RP ID に再登録できる。
+- 旧 RP ID `taskly.iy0306.com` のパスキー利用者が新 UI origin からログインでき、旧 API と新 API の署名カウンタ更新が競合しない。
 - 旧 Taskly アプリのユーザー・パスワード・TOTP・復旧コード・パスキー更新経路を auth DB に移管する。旧 DB と新 DB の書き込み競合を解消する。
 - Taskly 側の [`認証データ書き込み経路の棚卸し`](https://github.com/asari194617/taskly/blob/feat/auth-service-extraction/docs/auth-identity-write-inventory.md) にある管理者操作、ブロック、プロフィール、セッション失効も移管または明示的に同期する。
 - native/public client の PKCE 接続と、Taskly セッション・認証サービスセッションの連携ログアウトを確認する。
