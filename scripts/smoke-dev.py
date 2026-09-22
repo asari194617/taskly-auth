@@ -78,6 +78,7 @@ assert passkey_begin.status == 401, passkey_begin.read()
 assert ui_json_request("/auth/passkeys").status == 401
 assert ui_json_request("/auth/passkey/register/begin", {}).status == 401
 assert ui_json_request("/auth/email-code/settings").status == 401
+assert ui_json_request("/auth/recovery/generate", {}).status == 401
 
 body = json.dumps({"email": email, "password": password}).encode()
 response = opener.open(urllib.request.Request(
@@ -230,6 +231,29 @@ assert token_request({"grant_type": "refresh_token", "refresh_token": password_t
 assert ui_json_request("/auth/login", {"email": email, "password": password}).status == 401
 assert ui_json_request("/auth/login", {"email": email, "password": "new-password123"}).status == 200
 assert ui_json_request("/auth/password", {"current": "new-password123", "next": password}).status == 204
+
+assert ui_json_request("/auth/login", {"email": email, "password": password}).status == 200
+assert ui_json_request("/auth/recovery/generate", {"unexpected": True}).status == 400
+response = ui_json_request("/auth/recovery/generate", {})
+assert response.status == 200, response.read()
+first_codes = json.load(response)["codes"]
+assert len(first_codes) == 10 and len(set(first_codes)) == 10
+assert all(len(code) == 19 and code[4] == code[9] == code[14] == "-" for code in first_codes)
+response = ui_json_request("/auth/recovery/generate", {})
+assert response.status == 200, response.read()
+second_codes = json.load(response)["codes"]
+assert len(second_codes) == 10 and set(first_codes).isdisjoint(second_codes)
+response = ui_json_request("/auth/login", {"email": email, "password": password})
+assert response.status == 202, response.read()
+old_challenge = json.load(response)["auth_challenge"]
+assert ui_json_request("/auth/login", {"email": email, "auth_challenge": old_challenge,
+                                       "recovery_code": first_codes[0]}).status == 401
+response = ui_json_request("/auth/login", {"email": email, "password": password})
+assert response.status == 202, response.read()
+new_challenge = json.load(response)["auth_challenge"]
+response = ui_json_request("/auth/login", {"email": email, "auth_challenge": new_challenge,
+                                           "recovery_code": second_codes[0]})
+assert response.status == 200, response.read()
 
 response = request(ui + "/logout")
 assert response.status == 200, response.status

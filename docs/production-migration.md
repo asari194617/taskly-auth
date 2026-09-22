@@ -118,6 +118,7 @@ docker run --rm --read-only --network infra_default \
 - 旧 RP ID `taskly.iy0306.com` のパスキー利用者が新 UI origin からログインでき、旧 API と新 API の署名カウンタ更新が競合しない。
 - パスキーの所有権移管時に Taskly API の全インスタンスで `AUTH_PASSKEYS_EXTERNAL=1` を有効にし、旧 `/webauthn/*` と GraphQL の登録・変更・削除が拒否されることを確認する。このゲートだけでは他の認証データ書き込みは止まらない。
 - 旧 Taskly アプリのユーザー・パスワード・TOTP・復旧コード・パスキー更新経路を auth DB に移管する。旧 DB と新 DB の書き込み競合を解消する。
+- 復旧コードの所有権移管時は Taskly API の `AUTH_RECOVERY_EXTERNAL=1` で旧 GraphQL/REST の再発行を拒否し、旧ログイン経路によるコード消費も停止する。Web の `PUBLIC_AUTH_RECOVERY_URL=https://auth.taskly.iy0306.com/security` は新 UI 公開後に設定する。
 - Taskly 側の [`認証データ書き込み経路の棚卸し`](https://github.com/asari194617/taskly/blob/feat/auth-service-extraction/docs/auth-identity-write-inventory.md) にある管理者操作、ブロック、プロフィール、セッション失効も移管または明示的に同期する。
 - native/public client の PKCE 接続と、Taskly セッション・認証サービスセッションの連携ログアウトを確認する。
 - public client の登録機能は実装済みだが、本番 `OAUTH_PUBLIC_CLIENTS_JSON` は空のままにし、実際の native アプリの redirect URI と端末上でのコールバック検証ができるまで登録しない。
@@ -130,6 +131,8 @@ docker run --rm --read-only --network infra_default \
 2026-09-22 にパスワード管理を含むイメージ `5d466568ea72064837aba6c5d182eda8aeab9cbf` を内部ステージングへ配置した。Docker の health は healthy、内部 `/healthz` は200、`/security` は200、`/auth/password/status` は移行ゲートにより503。DB の読み取り専用件数は旧 `taskly.users` 47、新 `taskly_auth.users` 0。公開 `https://auth.taskly.iy0306.com/security` と `https://taskly-auth-api.iy0306.com/oauth/authorize` は証明書検証成功の503であり、ユーザー認証はまだ公開していない。
 
 同日にメールコード許可設定を含むイメージ `09c4f51f9cfc9d6e63a51fa2734ce86b3470b022` を内部ステージングへ配置した。転送前後の tar SHA-256 は `bba362993c1fce8710c9af91a0f312784c667754f0c9f1b411d4e399a1a1da36` で一致。コンテナ healthy、内部 `/healthz` は200、`/security` は200、`/auth/email-code/settings` は移行ゲートにより503。旧 DB は47ユーザー、新 DB は0ユーザー、公開 UI/API は証明書検証成功の503だった。開発用 MySQL の PR スモークテストは成功した。最初の手動ビルドでは開発用 Compose の MySQL ヘルスチェックが一時初期化サーバーを誤って準備完了と判定したため、最終 TCP サーバーを待つよう修正し、次の PR CI で成功した。その後の手動ワークフロー再実行は GitHub の請求・利用上限通知によりジョブ開始前に拒否されたため、既に作成済みで同じ認証バイナリを含む上記コミットの成果物を使用した。
+
+2026-09-23 に復旧コード再発行を追加し、独立した開発用 MySQL で旧コード失効・新コード利用・使用済み状態を検証した。本番イメージへの反映は GitHub Actions のジョブ開始が請求・利用上限で拒否されているため未実施である。公開 UI/API の503ゲートと旧 DB の正本を維持する。
 
 ## ロールバック
 

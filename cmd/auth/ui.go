@@ -48,6 +48,8 @@ var securityTemplate = template.Must(template.New("security").Parse(`<!doctype h
 </head><body><main><h1>認証設定</h1><p id="error" role="alert"></p><p id="notice" role="status"></p>
 <section id="email-section" hidden><h2>メールコード</h2><p>無効にするにはパスワードかパスキーが必要です。</p>
 <form id="email-form"><label><input id="email-enabled" type="checkbox"> メールコードを使う</label><button id="email-submit" type="submit">メールコード設定を保存</button></form></section>
+<section><h2>復旧コード</h2><p>再発行すると以前の未使用コードは使えなくなります。表示されるコードを安全な場所に保存してください。</p>
+<button id="recovery-generate" type="button">復旧コードを再発行</button><pre id="recovery-codes" hidden></pre></section>
 <h2>パスワード</h2>
 <form id="form" hidden><div id="current-field"><label for="current">現在のパスワード</label><input id="current" type="password" autocomplete="current-password"></div>
 <label for="next">新しいパスワード（8文字以上）</label><input id="next" type="password" autocomplete="new-password" required minlength="8">
@@ -90,6 +92,7 @@ const form = document.getElementById('form');
 const submit = document.getElementById('submit');
 const emailForm = document.getElementById('email-form');
 const emailSubmit = document.getElementById('email-submit');
+const recoveryGenerate = document.getElementById('recovery-generate');
 async function request(path, body) {
   const response = await fetch(api + path, {
     method: body === undefined ? 'GET' : 'POST', credentials: 'include',
@@ -137,6 +140,22 @@ emailForm.addEventListener('submit', async event => {
     notice.textContent = 'メールコード設定を更新しました。';
   } catch (_) { error.textContent = '通信に失敗しました。'; }
   finally { emailSubmit.disabled = false; }
+});
+recoveryGenerate.addEventListener('click', async () => {
+  if (!confirm('以前の未使用コードは使えなくなります。復旧コードを再発行しますか？')) return;
+  error.textContent = ''; notice.textContent = ''; recoveryGenerate.disabled = true;
+  document.getElementById('recovery-codes').hidden = true;
+  try {
+    const response = await request('/auth/recovery/generate', {});
+    if (response.status === 401) { location.assign('/login?next=security'); return; }
+    if (!response.ok) throw new Error('generate');
+    const result = await response.json();
+    const output = document.getElementById('recovery-codes');
+    output.textContent = result.codes.join('\n');
+    output.hidden = false;
+    notice.textContent = '復旧コードを再発行しました。この画面を閉じると再表示できません。';
+  } catch (_) { error.textContent = '復旧コードを再発行できませんでした。'; }
+  finally { recoveryGenerate.disabled = false; }
 });
 form.addEventListener('submit', async event => {
   event.preventDefault(); error.textContent = ''; notice.textContent = ''; submit.disabled = true;
