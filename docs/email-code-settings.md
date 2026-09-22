@@ -1,6 +1,6 @@
 # メールコード許可設定仕様
 
-Status: implementation in progress; production migration gate remains closed (2026-09-22)
+Status: implemented and verified in development CI; production migration gate remains closed (2026-09-22)
 
 ## 目的
 
@@ -17,3 +17,5 @@ Status: implementation in progress; production migration gate remains closed (20
 ## 切り替え条件
 
 Taskly Web は `PUBLIC_AUTH_EMAIL_CODE_URL=https://auth.taskly.iy0306.com/security` のビルドで本人設定へのリンクを表示し、旧トグルを隠す。Taskly API の `AUTH_EMAIL_SETTINGS_EXTERNAL=1` は本人用 GraphQL `setAuthSettings` と REST `POST /settings/auth` を拒否する。両設定は既定で無効にする。管理者の `adminUserUpdate` など旧 DB へ書く経路、旧ログインとコード使用経路が残る間は最終コピーと公開切り替えを行わない。
+
+開発用 MySQL の CI は、未ログインの拒否、必須値の検証、有効化・無効化と設定の読み戻しを確認した。最後のログイン手段を残す判定は Go 単体テストで確認した。内部ステージングは移行ゲートを閉じたままのため、実ユーザーでの変更は未実施。

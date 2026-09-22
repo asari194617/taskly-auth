@@ -129,6 +129,8 @@ docker run --rm --read-only --network infra_default \
 
 2026-09-22 にパスワード管理を含むイメージ `5d466568ea72064837aba6c5d182eda8aeab9cbf` を内部ステージングへ配置した。Docker の health は healthy、内部 `/healthz` は200、`/security` は200、`/auth/password/status` は移行ゲートにより503。DB の読み取り専用件数は旧 `taskly.users` 47、新 `taskly_auth.users` 0。公開 `https://auth.taskly.iy0306.com/security` と `https://taskly-auth-api.iy0306.com/oauth/authorize` は証明書検証成功の503であり、ユーザー認証はまだ公開していない。
 
+同日にメールコード許可設定を含むイメージ `09c4f51f9cfc9d6e63a51fa2734ce86b3470b022` を内部ステージングへ配置した。転送前後の tar SHA-256 は `bba362993c1fce8710c9af91a0f312784c667754f0c9f1b411d4e399a1a1da36` で一致。コンテナ healthy、内部 `/healthz` は200、`/security` は200、`/auth/email-code/settings` は移行ゲートにより503。旧 DB は47ユーザー、新 DB は0ユーザー、公開 UI/API は証明書検証成功の503だった。開発用 MySQL の PR スモークテストは成功した。最初の手動ビルドでは開発用 Compose の MySQL ヘルスチェックが一時初期化サーバーを誤って準備完了と判定したため、最終 TCP サーバーを待つよう修正し、次の PR CI で成功した。その後の手動ワークフロー再実行は GitHub の請求・利用上限通知によりジョブ開始前に拒否されたため、既に作成済みで同じ認証バイナリを含む上記コミットの成果物を使用した。
+
 ## ロールバック
 
 Taskly Web の OAuth リンクを非表示にし、旧ログインを維持します。新認証 DB 側で行われたパスワード変更、復旧コード消費、TOTP 設定、メールログイン設定などがあれば、旧 DB に安全に反映してから旧方式を正本に戻します。source と target のバックアップを保持し、単純な上書き復元で新しい更新を失わないようにします。
