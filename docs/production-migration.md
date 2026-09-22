@@ -118,7 +118,7 @@ docker run --rm --read-only --network infra_default \
 - 旧 RP ID `taskly.iy0306.com` のパスキー利用者が新 UI origin からログインでき、旧 API と新 API の署名カウンタ更新が競合しない。
 - パスキーの所有権移管時に Taskly API の全インスタンスで `AUTH_PASSKEYS_EXTERNAL=1` を有効にし、旧 `/webauthn/*` と GraphQL の登録・変更・削除が拒否されることを確認する。このゲートだけでは他の認証データ書き込みは止まらない。
 - 旧 Taskly アプリのユーザー・パスワード・TOTP・復旧コード・パスキー更新経路を auth DB に移管する。旧 DB と新 DB の書き込み競合を解消する。
-- 復旧コードの所有権移管時は Taskly API の `AUTH_RECOVERY_EXTERNAL=1` で旧 GraphQL/REST の再発行を拒否し、旧ログイン経路によるコード消費も停止する。Web の `PUBLIC_AUTH_RECOVERY_URL=https://auth.taskly.iy0306.com/security` は新 UI 公開後に設定する。
+- 復旧コードの所有権移管時は Taskly API の `AUTH_RECOVERY_EXTERNAL=1` で旧 GraphQL/REST の再発行と旧ログイン経路によるコード消費を拒否する。Web の `PUBLIC_AUTH_RECOVERY_URL=https://auth.taskly.iy0306.com/security` は新 UI 公開後に設定する。
 - Taskly 側の [`認証データ書き込み経路の棚卸し`](https://github.com/asari194617/taskly/blob/feat/auth-service-extraction/docs/auth-identity-write-inventory.md) にある管理者操作、ブロック、プロフィール、セッション失効も移管または明示的に同期する。
 - native/public client の PKCE 接続と、Taskly セッション・認証サービスセッションの連携ログアウトを確認する。
 - public client の登録機能は実装済みだが、本番 `OAUTH_PUBLIC_CLIENTS_JSON` は空のままにし、実際の native アプリの redirect URI と端末上でのコールバック検証ができるまで登録しない。
