@@ -205,9 +205,6 @@ assert response.status == 200
 assert json.load(response)["has_password"] is True
 response = request(api + "/oauth/authorize?" + params)
 assert response.status == 302
-password_request_id = urllib.parse.parse_qs(urllib.parse.urlparse(response.headers["Location"]).query)["request_id"][0]
-response = request(api + "/oauth/authorize?request_id=" + urllib.parse.quote(password_request_id))
-assert response.status == 302
 password_code = urllib.parse.parse_qs(urllib.parse.urlparse(response.headers["Location"]).query)["code"][0]
 response = token_request({"grant_type": "authorization_code", "code": password_code,
                           "redirect_uri": redirect_uri, "code_verifier": verifier})
