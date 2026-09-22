@@ -116,6 +116,7 @@ docker run --rm --read-only --network infra_default \
 
 - ユーザー ID、件数、ハッシュ、パスワード認証、メールコード、TOTP、復旧コード、ブロック判定を照合する。
 - 旧 RP ID `taskly.iy0306.com` のパスキー利用者が新 UI origin からログインでき、旧 API と新 API の署名カウンタ更新が競合しない。
+- パスキーの所有権移管時に Taskly API の全インスタンスで `AUTH_PASSKEYS_EXTERNAL=1` を有効にし、旧 `/webauthn/*` と GraphQL の登録・変更・削除が拒否されることを確認する。このゲートだけでは他の認証データ書き込みは止まらない。
 - 旧 Taskly アプリのユーザー・パスワード・TOTP・復旧コード・パスキー更新経路を auth DB に移管する。旧 DB と新 DB の書き込み競合を解消する。
 - Taskly 側の [`認証データ書き込み経路の棚卸し`](https://github.com/asari194617/taskly/blob/feat/auth-service-extraction/docs/auth-identity-write-inventory.md) にある管理者操作、ブロック、プロフィール、セッション失効も移管または明示的に同期する。
 - native/public client の PKCE 接続と、Taskly セッション・認証サービスセッションの連携ログアウトを確認する。
