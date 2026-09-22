@@ -197,6 +197,34 @@ if public_client_id and public_redirect_uri:
                            {"Authorization": "Basic " + basic})
         assert json.load(response)["active"] is False
 
+response = request(ui + "/security")
+assert response.status == 200
+assert b"/security.js" in response.read()
+response = ui_json_request("/auth/password/status")
+assert response.status == 200
+assert json.load(response)["has_password"] is True
+response = request(api + "/oauth/authorize?" + params)
+assert response.status == 302
+password_request_id = urllib.parse.parse_qs(urllib.parse.urlparse(response.headers["Location"]).query)["request_id"][0]
+response = request(api + "/oauth/authorize?request_id=" + urllib.parse.quote(password_request_id))
+assert response.status == 302
+password_code = urllib.parse.parse_qs(urllib.parse.urlparse(response.headers["Location"]).query)["code"][0]
+response = token_request({"grant_type": "authorization_code", "code": password_code,
+                          "redirect_uri": redirect_uri, "code_verifier": verifier})
+assert response.status == 200
+password_tokens = json.load(response)
+assert ui_json_request("/auth/password", {"current": "wrong", "next": "new-password123"}).status == 401
+response = ui_json_request("/auth/password", {"current": password, "next": "new-password123"})
+assert response.status == 204, response.read()
+assert ui_json_request("/auth/password/status").status == 401
+response = request(api + "/oauth/introspect", {"token": password_tokens["access_token"]},
+                   {"Authorization": "Basic " + basic})
+assert json.load(response)["active"] is False
+assert token_request({"grant_type": "refresh_token", "refresh_token": password_tokens["refresh_token"]}).status == 400
+assert ui_json_request("/auth/login", {"email": email, "password": password}).status == 401
+assert ui_json_request("/auth/login", {"email": email, "password": "new-password123"}).status == 200
+assert ui_json_request("/auth/password", {"current": "new-password123", "next": password}).status == 204
+
 response = request(ui + "/logout")
 assert response.status == 200, response.status
 assert b"/logout.js" in response.read()

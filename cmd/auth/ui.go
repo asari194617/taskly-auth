@@ -16,7 +16,7 @@ var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html>
 <div id="secondary"><label for="code">メールコード</label><input id="code" inputmode="numeric" autocomplete="one-time-code"><button id="send-code" type="button">メールコードを送信</button>
 <label for="totp">認証アプリのコード</label><input id="totp" inputmode="numeric" autocomplete="one-time-code">
 <label for="recovery">復旧コード</label><input id="recovery" autocomplete="off"></div>
-<button id="submit" type="submit">ログイン</button>{{if .Passkeys}} <button id="passkey" type="button">パスキーでログイン</button>{{end}}</form><p><a href="/passkeys">パスキーを管理</a></p><p>認証できない場合は <a href="{{.Legacy}}">従来のログイン画面</a> を利用できます。</p></main><script src="/login.js" defer></script></body></html>`))
+<button id="submit" type="submit">ログイン</button>{{if .Passkeys}} <button id="passkey" type="button">パスキーでログイン</button>{{end}}</form><p><a href="/security">パスワードを管理</a> · <a href="/passkeys">パスキーを管理</a></p><p>認証できない場合は <a href="{{.Legacy}}">従来のログイン画面</a> を利用できます。</p></main><script src="/login.js" defer></script></body></html>`))
 
 func (a *app) loginPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -41,6 +41,16 @@ var passkeysTemplate = template.Must(template.New("passkeys").Parse(`<!doctype h
 <ul id="keys"></ul><button id="register" type="button">パスキーを登録</button><p><a href="{{.Legacy}}">Taskly に戻る</a></p>
 </main><script src="/passkeys.js" defer></script></body></html>`))
 
+var securityTemplate = template.Must(template.New("security").Parse(`<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="api-base" content="{{.API}}"><title>Taskly パスワード管理</title>
+<style>body{font:16px system-ui,sans-serif;background:#f6f8fb;color:#17202c;margin:0}main{max-width:480px;margin:8vh auto;padding:28px;background:white;border-radius:12px;box-shadow:0 8px 30px #15243a16}h1{font-size:1.5rem}label{display:block;margin:16px 0 6px}input{box-sizing:border-box;width:100%;padding:12px;font:inherit;border:1px solid #aeb8c5;border-radius:6px}button{font:inherit;background:#185db6;color:white;border:0;border-radius:6px;padding:12px 18px;margin-top:18px;cursor:pointer}button:disabled{opacity:.6}#error{color:#ad2020;min-height:1.5em}a{color:#185db6}</style>
+</head><body><main><h1>パスワードを管理</h1><p id="error" role="alert"></p><p id="notice" role="status"></p>
+<form id="form" hidden><div id="current-field"><label for="current">現在のパスワード</label><input id="current" type="password" autocomplete="current-password"></div>
+<label for="next">新しいパスワード（8文字以上）</label><input id="next" type="password" autocomplete="new-password" required minlength="8">
+<button id="submit" type="submit">更新する</button></form><p><a id="login-again" href="/login?next=security" hidden>ログインし直す</a></p><p><a href="/passkeys">パスキーを管理</a></p>
+</main><script src="/security.js" defer></script></body></html>`))
+
 func (a *app) passkeysPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
@@ -54,6 +64,68 @@ func (a *app) passkeysJS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Write([]byte(passkeysJavaScript))
 }
+
+func (a *app) securityPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src "+a.issuer+"; base-uri 'none'; form-action 'none'")
+	_ = securityTemplate.Execute(w, map[string]string{"API": a.issuer})
+}
+
+func (a *app) securityJS(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Write([]byte(securityJavaScript))
+}
+
+const securityJavaScript = `
+const api = document.querySelector('meta[name="api-base"]').content;
+const error = document.getElementById('error');
+const notice = document.getElementById('notice');
+const form = document.getElementById('form');
+const submit = document.getElementById('submit');
+async function request(path, body) {
+  const response = await fetch(api + path, {
+    method: body === undefined ? 'GET' : 'POST', credentials: 'include',
+    headers: {'X-Auth-UI': '1', ...(body === undefined ? {} : {'Content-Type': 'application/json'})},
+    ...(body === undefined ? {} : {body: JSON.stringify(body)})
+  });
+  if (response.status === 401 && body === undefined) {
+    location.assign('/login?next=security');
+    return null;
+  }
+  return response;
+}
+async function loadStatus() {
+  try {
+    const response = await request('/auth/password/status');
+    if (!response) return;
+    if (!response.ok) throw new Error('status');
+    const status = await response.json();
+    document.getElementById('current-field').hidden = !status.has_password;
+    form.hidden = false;
+  } catch (_) { error.textContent = 'パスワード設定を読み込めませんでした。'; }
+}
+form.addEventListener('submit', async event => {
+  event.preventDefault(); error.textContent = ''; notice.textContent = ''; submit.disabled = true;
+  try {
+    const response = await request('/auth/password', {
+      current: document.getElementById('current').value,
+      next: document.getElementById('next').value
+    });
+    if (response.status === 401 && (await response.json()).error === 'login_required') {
+      location.assign('/login?next=security'); return;
+    }
+    if (!response.ok) { error.textContent = 'パスワードを更新できませんでした。現在のパスワードと入力内容を確認してください。'; return; }
+    form.hidden = true;
+    notice.textContent = 'パスワードを更新しました。再度ログインしてください。';
+    document.getElementById('login-again').hidden = false;
+  } catch (_) { error.textContent = '通信に失敗しました。'; }
+  finally { submit.disabled = false; }
+});
+loadStatus();
+`
 
 var logoutTemplate = template.Must(template.New("logout").Parse(`<!doctype html>
 <html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -103,7 +175,8 @@ finishLogout();
 const loginJavaScript = `
 const api = document.querySelector('meta[name="api-base"]').content;
 const requestID = new URLSearchParams(location.search).get('request_id');
-const managementLogin = !requestID && new URLSearchParams(location.search).get('next') === 'passkeys';
+const next = new URLSearchParams(location.search).get('next');
+const managementTarget = !requestID && (next === 'passkeys' || next === 'security') ? next : '';
 const form = document.getElementById('form');
 const error = document.getElementById('error');
 const submit = document.getElementById('submit');
@@ -118,12 +191,12 @@ function encodeBase64url(value) {
   for (const byte of bytes) raw += String.fromCharCode(byte);
   return btoa(raw).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
-if (!managementLogin && (!requestID || !/^[A-Za-z0-9._~-]{43,128}$/.test(requestID))) {
+if (!managementTarget && (!requestID || !/^[A-Za-z0-9._~-]{43,128}$/.test(requestID))) {
   error.textContent = 'Taskly からログインを開始してください。';
   form.hidden = true;
 }
 function afterLogin() {
-  location.assign(managementLogin ? '/passkeys' : api + '/oauth/authorize?request_id=' + encodeURIComponent(requestID));
+  location.assign(managementTarget ? '/' + managementTarget : api + '/oauth/authorize?request_id=' + encodeURIComponent(requestID));
 }
 async function post(path, body) {
   const response = await fetch(api + path, {

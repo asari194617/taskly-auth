@@ -1,0 +1,20 @@
+# パスワード管理仕様
+
+Status: implementation in progress; production migration gate remains closed (2026-09-22)
+
+## 目的
+
+認証 DB が正本になった後、本人が認証サービス上でパスワードを追加・変更できるようにする。既存ユーザー ID とパスキーは維持する。旧 Taskly DB の `users.hashed_password` は公開切り替え前のまま残し、二重書き込み期間を設けない。
+
+## API と画面
+
+- `GET /security` はパスワード設定画面。`GET /auth/password/status` は現在パスワードが設定済みかだけを返す。ハッシュは返さない。
+- `POST /auth/password` は `current` と `next` の JSON を受ける。認証 UI と完全一致する `Origin`、`X-Auth-UI: 1`、直近10分以内のログインセッションを要求する。
+- 既存のパスワードがある場合は `current` の bcrypt 検証が必須。パスワードがないアカウントは、直近のパスキーまたはメールコード等によるログイン後に追加できる。
+- `next` は空白だけを拒否し、UTF-8で8文字以上、bcrypt の72バイト以下とする。既存の認証処理と同じ bcrypt コストで保存する。
+- 成功時には同じ DB トランザクション内でパスワードを更新し、本人の全認証 UI セッション、未使用の認可コード、OAuth アクセス・リフレッシュトークンを失効させる。画面はログインへ戻す。失敗時にはパスワードと失効状態を変更しない。
+- 本人確認エラーは一般化した応答にし、試行回数を制限する。DB エラーは Discord alert を出し、秘密情報を記録しない。
+
+## 切り替え条件
+
+本番 `AUTH_MIGRATION_READY=0` では全 API が503。旧 GraphQL `setPassword` と REST 設定更新が旧 DB に書く間は、auth DB に実ユーザーを最終コピーして公開しない。旧書き込み停止、データ照合、Taskly 設定画面からの導線、切り戻し時の新ハッシュ反映を別途確認する。
