@@ -13,7 +13,8 @@ services:
     ports:
       - "127.0.0.1:3307:3306"
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      # The initialization server listens only on a Unix socket; wait for final TCP startup.
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--protocol=tcp"]
       interval: 10s
       timeout: 5s
       retries: 10
