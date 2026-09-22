@@ -12,8 +12,8 @@ services:
     networks:
       - taskly
     ports:
-      - "127.0.0.1:3067:3067"
-      - "127.0.0.1:3068:3068"
+      - "127.0.0.1:3070:3067"
+      - "127.0.0.1:3071:3068"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3067/healthz"]

@@ -18,7 +18,7 @@ Cloudflare の DNS で以下を設定します。証明書発行時は DNS only 
 | A | `taskly-auth-api` | `133.242.49.12` | DNS only | Auto |
 | A | `auth.taskly` | `133.242.49.12` | DNS only | Auto |
 
-各ホストの Nginx vhost は `deploy/nginx/` に保存します。切り替え後は UI を `127.0.0.1:3068`、API を `127.0.0.1:3067` に proxy します。新 UI ホストは切り替え前に明示的な503と `Retry-After` を返し、HTTP は HTTPS にリダイレクトします。OAuth の移行ゲートが整うまで本番 OAuth redirect は有効にしません。
+各ホストの Nginx vhost は `deploy/nginx/` に保存します。切り替え後は UI を `127.0.0.1:3071`、API を `127.0.0.1:3070` に proxy します。コンテナ内の待受ポートはそれぞれ `3068` と `3067` のままです。ホストの `3067`～`3069` は既存の監視サービスに割り当てられています。新 UI ホストは切り替え前に明示的な503と `Retry-After` を返し、HTTP は HTTPS にリダイレクトします。OAuth の移行ゲートが整うまで本番 OAuth redirect は有効にしません。
 
 ### 公開先の確認 (2026-09-21)
 
