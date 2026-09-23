@@ -120,6 +120,7 @@ func (a *app) ensureOAuthSchema(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS auth_sessions (token_hash CHAR(64) PRIMARY KEY, user_id BIGINT UNSIGNED NOT NULL, expires_at DATETIME NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
 		`CREATE TABLE IF NOT EXISTS auth_challenges (token_hash CHAR(64) PRIMARY KEY, user_id BIGINT UNSIGNED NOT NULL, attempts INT NOT NULL DEFAULT 0, expires_at DATETIME NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
 		`CREATE TABLE IF NOT EXISTS auth_webauthn_sessions (token_hash CHAR(64) PRIMARY KEY, user_id BIGINT UNSIGNED NOT NULL, purpose VARCHAR(16) NOT NULL, session_data TEXT NOT NULL, expires_at DATETIME NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+		`CREATE TABLE IF NOT EXISTS auth_totp_setups (user_id BIGINT UNSIGNED PRIMARY KEY, encrypted_secret VARCHAR(512) NOT NULL, expires_at DATETIME NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX idx_auth_totp_setups_expires (expires_at))`,
 		`CREATE TABLE IF NOT EXISTS auth_rate_limits (key_hash CHAR(64) PRIMARY KEY, attempts INT NOT NULL, window_start DATETIME NOT NULL)`,
 	}
 	for _, statement := range statements {

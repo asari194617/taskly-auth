@@ -163,3 +163,17 @@ CREATE TABLE IF NOT EXISTS auth_webauthn_sessions (
   expires_at DATETIME NOT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS auth_totp_setups (
+  user_id BIGINT UNSIGNED PRIMARY KEY,
+  encrypted_secret VARCHAR(512) NOT NULL,
+  expires_at DATETIME NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_auth_totp_setups_expires (expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS auth_rate_limits (
+  key_hash CHAR(64) PRIMARY KEY,
+  attempts INT NOT NULL,
+  window_start DATETIME NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

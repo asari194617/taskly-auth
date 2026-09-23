@@ -50,6 +50,11 @@ var securityTemplate = template.Must(template.New("security").Parse(`<!doctype h
 <form id="email-form"><label><input id="email-enabled" type="checkbox"> メールコードを使う</label><button id="email-submit" type="submit">メールコード設定を保存</button></form></section>
 <section><h2>復旧コード</h2><p>再発行すると以前の未使用コードは使えなくなります。表示されるコードを安全な場所に保存してください。</p>
 <button id="recovery-generate" type="button">復旧コードを再発行</button><pre id="recovery-codes" hidden></pre></section>
+<section id="totp-section" hidden><h2>認証アプリ</h2><p id="totp-state"></p>
+<button id="totp-setup" type="button">設定を始める</button>
+<div id="totp-setup-details" hidden><p>認証アプリで次のリンクを開くか、秘密鍵を手動入力してください。</p><p><a id="totp-link" href="">認証アプリで開く</a></p><pre id="totp-secret"></pre>
+<form id="totp-activate-form"><label for="totp-activate-code">認証アプリの6桁コード</label><input id="totp-activate-code" inputmode="numeric" autocomplete="one-time-code" required pattern="[0-9]{6}"><button id="totp-activate" type="submit">有効にする</button></form></div>
+<form id="totp-disable-form" hidden><label for="totp-disable-code">現在の6桁コード</label><input id="totp-disable-code" inputmode="numeric" autocomplete="one-time-code" required pattern="[0-9]{6}"><button id="totp-disable" type="submit">無効にする</button></form></section>
 <h2>パスワード</h2>
 <form id="form" hidden><div id="current-field"><label for="current">現在のパスワード</label><input id="current" type="password" autocomplete="current-password"></div>
 <label for="next">新しいパスワード（8文字以上）</label><input id="next" type="password" autocomplete="new-password" required minlength="8">
@@ -93,6 +98,9 @@ const submit = document.getElementById('submit');
 const emailForm = document.getElementById('email-form');
 const emailSubmit = document.getElementById('email-submit');
 const recoveryGenerate = document.getElementById('recovery-generate');
+const totpSetup = document.getElementById('totp-setup');
+const totpActivateForm = document.getElementById('totp-activate-form');
+const totpDisableForm = document.getElementById('totp-disable-form');
 async function request(path, body) {
   const response = await fetch(api + path, {
     method: body === undefined ? 'GET' : 'POST', credentials: 'include',
@@ -125,6 +133,56 @@ async function loadEmailSettings() {
     document.getElementById('email-section').hidden = false;
   } catch (_) { error.textContent = 'メールコード設定を読み込めませんでした。'; }
 }
+async function loadTOTPStatus() {
+  try {
+    const response = await request('/auth/totp/status');
+    if (!response) return;
+    if (!response.ok) throw new Error('status');
+    const status = await response.json();
+    document.getElementById('totp-state').textContent = status.enabled ? '有効です。' : '無効です。';
+    totpSetup.hidden = status.enabled;
+    totpDisableForm.hidden = !status.enabled;
+    document.getElementById('totp-setup-details').hidden = true;
+    document.getElementById('totp-section').hidden = false;
+  } catch (_) { error.textContent = '認証アプリ設定を読み込めませんでした。'; }
+}
+totpSetup.addEventListener('click', async () => {
+  error.textContent = ''; notice.textContent = ''; totpSetup.disabled = true;
+  try {
+    const response = await request('/auth/totp/setup', {});
+    if (response.status === 401) { location.assign('/login?next=security'); return; }
+    if (!response.ok) throw new Error('setup');
+    const setup = await response.json();
+    document.getElementById('totp-secret').textContent = setup.secret;
+    document.getElementById('totp-link').href = setup.otpauth;
+    document.getElementById('totp-setup-details').hidden = false;
+  } catch (_) { error.textContent = '認証アプリの設定を開始できませんでした。'; }
+  finally { totpSetup.disabled = false; }
+});
+totpActivateForm.addEventListener('submit', async event => {
+  event.preventDefault(); error.textContent = ''; notice.textContent = '';
+  const button = document.getElementById('totp-activate'); button.disabled = true;
+  try {
+    const response = await request('/auth/totp/activate', {code: document.getElementById('totp-activate-code').value});
+    if (response.status === 401) { error.textContent = 'コードが正しくないか、再ログインが必要です。'; return; }
+    if (!response.ok) throw new Error('activate');
+    notice.textContent = '認証アプリを有効にしました。';
+    await loadTOTPStatus();
+  } catch (_) { error.textContent = '認証アプリを有効にできませんでした。'; }
+  finally { button.disabled = false; }
+});
+totpDisableForm.addEventListener('submit', async event => {
+  event.preventDefault(); error.textContent = ''; notice.textContent = '';
+  const button = document.getElementById('totp-disable'); button.disabled = true;
+  try {
+    const response = await request('/auth/totp/disable', {code: document.getElementById('totp-disable-code').value});
+    if (response.status === 401) { error.textContent = 'コードが正しくないか、再ログインが必要です。'; return; }
+    if (!response.ok) throw new Error('disable');
+    notice.textContent = '認証アプリを無効にしました。';
+    await loadTOTPStatus();
+  } catch (_) { error.textContent = '認証アプリを無効にできませんでした。別のログイン方法が必要です。'; }
+  finally { button.disabled = false; }
+});
 emailForm.addEventListener('submit', async event => {
   event.preventDefault(); error.textContent = ''; notice.textContent = ''; emailSubmit.disabled = true;
   try {
@@ -176,6 +234,7 @@ form.addEventListener('submit', async event => {
 });
 loadStatus();
 loadEmailSettings();
+loadTOTPStatus();
 `
 
 var logoutTemplate = template.Must(template.New("logout").Parse(`<!doctype html>

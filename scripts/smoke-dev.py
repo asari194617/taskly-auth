@@ -3,10 +3,13 @@
 
 import base64
 import hashlib
+import hmac
 import http.cookiejar
 import json
 import os
 import secrets
+import struct
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -56,6 +59,16 @@ def ui_json_request(path, body=None):
         return exc
 
 
+def totp_code(secret):
+    padding = "=" * ((8 - len(secret) % 8) % 8)
+    key = base64.b32decode(secret + padding)
+    counter = int(time.time()) // 30
+    digest = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    value = struct.unpack(">I", digest[offset:offset + 4])[0] & 0x7FFFFFFF
+    return f"{value % 1000000:06d}"
+
+
 verifier = secrets.token_urlsafe(32)
 challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
 state = secrets.token_urlsafe(32)
@@ -79,6 +92,8 @@ assert ui_json_request("/auth/passkeys").status == 401
 assert ui_json_request("/auth/passkey/register/begin", {}).status == 401
 assert ui_json_request("/auth/email-code/settings").status == 401
 assert ui_json_request("/auth/recovery/generate", {}).status == 401
+assert ui_json_request("/auth/totp/status").status == 401
+assert ui_json_request("/auth/totp/setup", {}).status == 401
 
 body = json.dumps({"email": email, "password": password}).encode()
 response = opener.open(urllib.request.Request(
@@ -254,6 +269,29 @@ new_challenge = json.load(response)["auth_challenge"]
 response = ui_json_request("/auth/login", {"email": email, "auth_challenge": new_challenge,
                                            "recovery_code": second_codes[0]})
 assert response.status == 200, response.read()
+
+response = ui_json_request("/auth/totp/status")
+assert response.status == 200, response.read()
+assert json.load(response)["enabled"] is False
+assert ui_json_request("/auth/totp/setup", {"unexpected": True}).status == 400
+response = ui_json_request("/auth/totp/setup", {})
+assert response.status == 200, response.read()
+totp_setup = json.load(response)
+assert totp_setup["secret"] in totp_setup["otpauth"]
+code = totp_code(totp_setup["secret"])
+assert ui_json_request("/auth/totp/activate", {"code": "invalid"}).status == 400
+response = ui_json_request("/auth/totp/activate", {"code": code})
+assert response.status == 204, response.read()
+assert json.load(ui_json_request("/auth/totp/status"))["enabled"] is True
+response = ui_json_request("/auth/login", {"email": email, "password": password})
+assert response.status == 202, response.read()
+totp_challenge = json.load(response)["auth_challenge"]
+response = ui_json_request("/auth/login", {"email": email, "auth_challenge": totp_challenge,
+                                           "totp": totp_code(totp_setup["secret"])})
+assert response.status == 200, response.read()
+response = ui_json_request("/auth/totp/disable", {"code": totp_code(totp_setup["secret"])})
+assert response.status == 204, response.read()
+assert json.load(ui_json_request("/auth/totp/status"))["enabled"] is False
 
 response = request(ui + "/logout")
 assert response.status == 200, response.status
