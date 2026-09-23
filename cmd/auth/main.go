@@ -26,6 +26,7 @@ type app struct {
 	ready         bool
 	alerts        *alerter
 	webAuthn      *webauthn.WebAuthn
+	internalToken string
 }
 
 func env(key, fallback string) string {
@@ -58,13 +59,14 @@ func main() {
 		log.Fatal("auth DB unavailable")
 	}
 	a := &app{
-		db:           db,
-		issuer:       strings.TrimRight(env("AUTH_ISSUER", "http://localhost:3067"), "/"),
-		uiURL:        strings.TrimRight(env("AUTH_UI_URL", "http://localhost:3068"), "/"),
-		clientID:     env("OAUTH_CLIENT_ID", "taskly-web"),
-		clientSecret: os.Getenv("OAUTH_CLIENT_SECRET"),
-		redirectURI:  os.Getenv("OAUTH_REDIRECT_URI"),
-		alerts:       alerts,
+		db:            db,
+		issuer:        strings.TrimRight(env("AUTH_ISSUER", "http://localhost:3067"), "/"),
+		uiURL:         strings.TrimRight(env("AUTH_UI_URL", "http://localhost:3068"), "/"),
+		clientID:      env("OAUTH_CLIENT_ID", "taskly-web"),
+		clientSecret:  os.Getenv("OAUTH_CLIENT_SECRET"),
+		redirectURI:   os.Getenv("OAUTH_REDIRECT_URI"),
+		alerts:        alerts,
+		internalToken: os.Getenv("AUTH_INTERNAL_TOKEN"),
 	}
 	a.publicClients, err = parsePublicClients(os.Getenv("OAUTH_PUBLIC_CLIENTS_JSON"), a.clientID)
 	if err != nil {
@@ -91,6 +93,10 @@ func main() {
 	if env("NODE_ENV", "development") == "production" && (len(a.clientSecret) < 32 || os.Getenv("TOTP_ENC_KEY") == "" || strings.EqualFold(env("SMTP_TLS", "starttls"), "none")) {
 		alerts.sendSync("Taskly auth startup failed: security configuration invalid")
 		log.Fatal("production client secret, TOTP key, and SMTP TLS configuration are required")
+	}
+	if env("NODE_ENV", "development") == "production" && a.ready && len(a.internalToken) < 32 {
+		alerts.sendSync("Taskly auth startup failed: internal API configuration invalid")
+		log.Fatal("AUTH_INTERNAL_TOKEN must contain at least 32 characters when migration is ready")
 	}
 	if err := a.ensureOAuthSchema(context.Background()); err != nil {
 		alerts.sendSync("Taskly auth startup failed: database schema unavailable")
@@ -123,6 +129,7 @@ func main() {
 	api.HandleFunc("POST /auth/passkey/register/finish", a.passkeyRegisterFinish)
 	api.HandleFunc("POST /auth/passkey/rename", a.passkeyRename)
 	api.HandleFunc("POST /auth/passkey/delete", a.passkeyDelete)
+	api.HandleFunc("PUT /internal/users/{id}/block", a.syncBlock)
 	ui := http.NewServeMux()
 	ui.HandleFunc("GET /healthz", a.health)
 	ui.HandleFunc("GET /login", a.loginPage)
@@ -169,7 +176,7 @@ func (a *app) wrapAPI(next http.Handler) http.Handler {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		if !a.ready && (strings.HasPrefix(r.URL.Path, "/auth/") || strings.HasPrefix(r.URL.Path, "/oauth/")) {
+		if !a.ready && (strings.HasPrefix(r.URL.Path, "/auth/") || strings.HasPrefix(r.URL.Path, "/oauth/") || strings.HasPrefix(r.URL.Path, "/internal/")) {
 			http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
 			return
 		}

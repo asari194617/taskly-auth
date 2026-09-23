@@ -22,6 +22,9 @@ client_secret = os.environ.get("OAUTH_CLIENT_SECRET", "replace-with-a-long-rando
 redirect_uri = os.environ.get("OAUTH_REDIRECT_URI", "http://localhost:3063/auth/oauth/callback")
 email = os.environ["AUTH_DEV_EMAIL"]
 password = os.environ["AUTH_DEV_PASSWORD"]
+internal_token = os.environ.get(
+    "AUTH_INTERNAL_TOKEN", "replace-with-an-independent-random-internal-token"
+)
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -53,6 +56,19 @@ def ui_json_request(path, body=None):
     if data is not None:
         headers["Content-Type"] = "application/json"
     req = urllib.request.Request(api + path, data, headers)
+    try:
+        return opener.open(req)
+    except urllib.error.HTTPError as exc:
+        return exc
+
+
+def internal_block_request(user_id, payload, token=internal_token):
+    req = urllib.request.Request(
+        api + f"/internal/users/{user_id}/block",
+        json.dumps(payload).encode(),
+        {"Authorization": "Bearer " + token, "Content-Type": "application/json"},
+        method="PUT",
+    )
     try:
         return opener.open(req)
     except urllib.error.HTTPError as exc:
@@ -140,7 +156,9 @@ assert token_request({"grant_type": "authorization_code", "code": code,
 
 response = request(api + "/oauth/userinfo", headers={"Authorization": "Bearer " + tokens["access_token"]})
 assert response.status == 200
-assert json.load(response)["email"] == email
+user_info = json.load(response)
+assert user_info["email"] == email
+user_id = user_info["sub"]
 
 basic = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
 response = request(api + "/oauth/introspect", {"token": tokens["access_token"]},
@@ -292,6 +310,15 @@ assert response.status == 200, response.read()
 response = ui_json_request("/auth/totp/disable", {"code": totp_code(totp_setup["secret"])})
 assert response.status == 204, response.read()
 assert json.load(ui_json_request("/auth/totp/status"))["enabled"] is False
+
+assert internal_block_request(user_id, {"active": True}, "wrong-token").status == 401
+response = internal_block_request(user_id, {"active": True, "reason": "smoke test"})
+assert response.status == 200, response.read()
+assert json.load(response)["active"] is True
+assert ui_json_request("/auth/password/status").status == 401
+response = internal_block_request(user_id, {"active": False})
+assert response.status == 200, response.read()
+assert json.load(response)["active"] is False
 
 response = request(ui + "/logout")
 assert response.status == 200, response.status
