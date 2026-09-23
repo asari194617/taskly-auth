@@ -39,6 +39,12 @@ refresh token、認証 challenge を同じ transaction で失効させる。解�
 - auth DB が空の内部 stage と現在の本番ではフラグを有効にしない。
 - 最終コピー後、既存 `blocks` の照合、ブロック・解除・再送・通信失敗の確認を行ってから有効化する。
 
+2026-09-23 の独立 MySQL スモークでは、誤った internal token の拒否、ブロック、auth UI session と
+OAuth token の失効、解除、および既存の OAuth 2.1・パスワード・復旧コード・TOTP フローを確認した。
+同じイメージを本番ホストの内部 stage に配置し、internal API が `AUTH_MIGRATION_READY=0` により503を
+返すこと、ホスト公開ポートがないこと、旧 DB 47ユーザーと空の認証 DB 0ユーザーが維持されることを
+確認した。
+
 ## 監視と秘密情報
 
 認証サービスは不正な internal token を 401、対象利用者不在を 404、不正 JSON を 400、DB 失敗を
