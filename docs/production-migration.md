@@ -123,6 +123,7 @@ docker run --rm --read-only --network infra_default \
 - パスキーの所有権移管時に Taskly API の全インスタンスで `AUTH_PASSKEYS_EXTERNAL=1` を有効にし、旧 `/webauthn/*` と GraphQL の登録・変更・削除が拒否されることを確認する。このゲートだけでは他の認証データ書き込みは止まらない。
 - 旧 Taskly アプリのユーザー・パスワード・TOTP・復旧コード・パスキー更新経路を auth DB に移管する。旧 DB と新 DB の書き込み競合を解消する。
 - 復旧コードの所有権移管時は Taskly API の `AUTH_RECOVERY_EXTERNAL=1` で旧 GraphQL/REST の再発行と旧ログイン経路によるコード消費を拒否する。Web の `PUBLIC_AUTH_RECOVERY_URL=https://auth.taskly.iy0306.com/security` は新 UI 公開後に設定する。
+- TOTP の所有権移管時は Taskly API の `AUTH_TOTP_EXTERNAL=1` で旧 GraphQL/REST の設定変更、方法一覧、旧ログイン経路によるコード検証を拒否する。Web の `PUBLIC_AUTH_TOTP_URL=https://auth.taskly.iy0306.com/security` は新 UI 公開後に設定する。暗号化済み秘密と `TOTP_ENC_KEY` は変換しない。
 - Taskly 側の [`認証データ書き込み経路の棚卸し`](https://github.com/asari194617/taskly/blob/feat/auth-service-extraction/docs/auth-identity-write-inventory.md) にある管理者操作、ブロック、プロフィール、セッション失効も移管または明示的に同期する。
 - native/public client の PKCE 接続と、Taskly セッション・認証サービスセッションの連携ログアウトを確認する。
 - public client の登録機能は実装済みだが、本番 `OAUTH_PUBLIC_CLIENTS_JSON` は空のままにし、実際の native アプリの redirect URI と端末上でのコールバック検証ができるまで登録しない。
@@ -139,6 +140,8 @@ docker run --rm --read-only --network infra_default \
 2026-09-23 に復旧コード再発行を追加し、独立した開発用 MySQL で旧コード失効・新コード利用・使用済み状態を検証した。GitHub Actions のジョブ開始が請求・利用上限で拒否されたため、コミット `9ab872d0ad3000d9229559064aa81e2b0e931c5e` をローカルで `linux/amd64` イメージにビルドした。転送前後の tar SHA-256 は `e27bb4128a7473c9ff8e57bbcf060362bf13bb87b0d836e0895f819b6c0cb19b` で一致した。内部ステージングは healthy、`/healthz` は200、`/security` は200、`/auth/recovery/generate` は移行ゲートで503。公開 UI/API は証明書検証成功の503、旧 DB は47ユーザー、新認証 DB は0ユーザーで、旧 DB の正本を維持する。このイメージには GitHub CI の実行結果がない。
 
 その後 GitHub Actions が復旧し、PR の Go テスト・MySQL スモークと手動ワークフロー `35745333508` の Go テスト・MySQL スモーク・イメージ作成が成功した。コミット `dcdac23f61cd8125fa94a9cc867b9fd589ed59d1` の非公開成果物を取得し、転送前後の tar SHA-256 `58f4301a6077a5acc9c32d2ef078349164a07f635b5b4fa9fc4ac17fb64eb331` を照合して内部ステージングに配置した。コンテナは healthy、ホスト公開ポートなし、内部 `/healthz` は200、`/security` は200、`/auth/recovery/generate` は503。公開 UI/API は TLS 検証成功の503、旧 DB は47ユーザー、新認証 DB は0ユーザーだった。
+
+同日、TOTP 管理を追加したコミット `54fa181b23a12fad3fc9ffb937886e13b9f43618` は PR と手動ワークフロー `35805587467` で Go テスト、静的解析、独立 MySQL の設定・MFAログイン・無効化スモーク、イメージ作成が成功した。非公開成果物の転送前後 SHA-256 `345738b701ef6b67af6a6dad761c39388cd53edec201da3716228a7539b37afe` を照合して内部ステージングに配置した。コンテナは healthy、ホスト公開ポートなし、内部 `/healthz` と `/security` は200、`/auth/totp/status` は移行ゲートで503。起動時に `auth_totp_setups` が作成され、旧 DB は47ユーザー、新認証 DBは0ユーザーを維持した。本番 Nginx に残っていた監視用ポート `3067` / `3068` への古い upstream を、予約済みの `3070` / `3071` に修正し、構文検査後に再読込した。公開 API、旧 UI、新 UI はいずれも TLS 検証成功の503である。
 
 ## ロールバック
 
