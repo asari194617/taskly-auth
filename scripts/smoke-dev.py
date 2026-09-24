@@ -279,7 +279,7 @@ response = request(api + "/oauth/introspect", {"token": password_tokens["access_
                    {"Authorization": "Basic " + basic})
 assert json.load(response)["active"] is False
 assert token_request({"grant_type": "refresh_token", "refresh_token": password_tokens["refresh_token"]}).status == 400
-assert ui_json_request("/auth/login", {"email": email, "password": password}).status == 401
+assert ui_json_request("/auth/passkey/begin", {"email": email}).status == 401
 assert ui_json_request("/auth/login", {"email": email, "password": "new-password123"}).status == 200
 assert ui_json_request("/auth/password", {"current": "new-password123", "next": password}).status == 204
 
