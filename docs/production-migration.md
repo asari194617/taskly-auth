@@ -82,7 +82,7 @@ DB 接続・スキーマ・設定の起動失敗時は、Discord への送信が
 
 ## コピー
 
-`migrate-auth` は `users`, `totp_secrets`, `recovery_codes`, `passkeys`, `login_codes`, `sessions`, `blocks` を主キーごとコピーします。元行を更新・削除しません。移行先に 1 行でも存在すれば拒否します。各テーブルのコピー後と全体コピー後に件数と SHA-256 を比較します。
+`migrate-auth` は `users`, `totp_secrets`, `recovery_codes`, `passkeys`, `login_codes`, `sessions`, `blocks` を主キーごとコピーします。元行を更新・削除しません。移行先に 1 行でも存在すれば拒否します。各テーブルのコピー後と全体コピー後に件数と SHA-256 を比較します。切り替え後の退会と期限後消去は[アカウント退会・消去の同期](account-lifecycle-sync.md)に従います。
 
 2026-09-23 に Taskly の `users` に `deleted_at DATETIME NULL` が追加された。新規環境の `schema.sql` は同列を持つ。既存の `taskly_auth.users` が旧スキーマのままなら、コピー前に `SHOW COLUMNS FROM taskly_auth.users` で列の有無を確認し、空テーブルであることを確認した上で `ALTER TABLE taskly_auth.users ADD COLUMN deleted_at DATETIME NULL` を適用する。移行ツールは元 DB と先 DB の列名・順序を照合し、差異があればコピーを拒否する。`policy_consents` はアプリ DB の同意イベントとして維持し、この7テーブルのコピー対象には含めない。退会後30日で動くアプリ側の消去処理は認証 DB を消去しないため、両 DB の退会・保留・期限後消去を連携し、復元後にも消去を再適用できるまで本番切り替えを禁止する。
 
