@@ -75,6 +75,24 @@ def internal_block_request(user_id, payload, token=internal_token):
         return exc
 
 
+def internal_lifecycle_request(user_id, payload=None, token=internal_token):
+    method = "DELETE" if payload is None else "PUT"
+    data = None if payload is None else json.dumps(payload).encode()
+    headers = {"Authorization": "Bearer " + token}
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(
+        api + f"/internal/users/{user_id}" + ("" if payload is None else "/lifecycle"),
+        data,
+        headers,
+        method=method,
+    )
+    try:
+        return opener.open(req)
+    except urllib.error.HTTPError as exc:
+        return exc
+
+
 def totp_code(secret):
     padding = "=" * ((8 - len(secret) % 8) % 8)
     key = base64.b32decode(secret + padding)
@@ -328,5 +346,20 @@ assert response.status == 204, response.read()
 response = request(api + "/oauth/authorize?" + params)
 assert response.status == 302, response.status
 assert response.headers["Location"].startswith(ui + "/login?")
+
+deleted_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+assert internal_lifecycle_request(
+    user_id, {"deleted": True, "deleted_at": deleted_at}, "wrong-token"
+).status == 401
+response = internal_lifecycle_request(user_id, {"deleted": True, "deleted_at": deleted_at})
+assert response.status == 200, response.read()
+assert json.load(response)["deleted_at"] == deleted_at
+assert ui_json_request("/auth/login", {"email": email, "password": password}).status == 401
+response = internal_lifecycle_request(user_id, {"deleted": True, "deleted_at": deleted_at})
+assert response.status == 200, response.read()
+response = internal_lifecycle_request(user_id)
+assert response.status == 204, response.read()
+response = internal_lifecycle_request(user_id)
+assert response.status == 204, response.read()
 
 print("OAuth 2.1 local smoke passed")

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/subtle"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -18,13 +17,7 @@ type blockSyncRequest struct {
 }
 
 func (a *app) syncBlock(w http.ResponseWriter, r *http.Request) {
-	if a.internalToken == "" {
-		http.Error(w, "internal API unavailable", http.StatusServiceUnavailable)
-		return
-	}
-	provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if provided == r.Header.Get("Authorization") || subtle.ConstantTimeCompare([]byte(provided), []byte(a.internalToken)) != 1 {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	if !a.authorizeInternal(w, r) {
 		return
 	}
 	userID, err := strconv.ParseUint(r.PathValue("id"), 10, 64)

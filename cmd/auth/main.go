@@ -130,6 +130,8 @@ func main() {
 	api.HandleFunc("POST /auth/passkey/rename", a.passkeyRename)
 	api.HandleFunc("POST /auth/passkey/delete", a.passkeyDelete)
 	api.HandleFunc("PUT /internal/users/{id}/block", a.syncBlock)
+	api.HandleFunc("PUT /internal/users/{id}/lifecycle", a.syncUserLifecycle)
+	api.HandleFunc("DELETE /internal/users/{id}", a.eraseUser)
 	ui := http.NewServeMux()
 	ui.HandleFunc("GET /healthz", a.health)
 	ui.HandleFunc("GET /login", a.loginPage)
