@@ -86,7 +86,7 @@ DB 接続・スキーマ・設定の起動失敗時は、Discord への送信が
 
 2026-09-23 に Taskly の `users` に `deleted_at DATETIME NULL` が追加された。新規環境の `schema.sql` は同列を持つ。既存の `taskly_auth.users` が旧スキーマのままなら、コピー前に `SHOW COLUMNS FROM taskly_auth.users` で列の有無を確認し、空テーブルであることを確認した上で `ALTER TABLE taskly_auth.users ADD COLUMN deleted_at DATETIME NULL` を適用する。移行ツールは元 DB と先 DB の列名・順序を照合し、差異があればコピーを拒否する。`policy_consents` はアプリ DB の同意イベントとして維持し、この7テーブルのコピー対象には含めない。退会後30日で動くアプリ側の消去処理は認証 DB を消去しないため、両 DB の退会・保留・期限後消去を連携し、復元後にも消去を再適用できるまで本番切り替えを禁止する。
 
-同日の本番読み取り専用確認では、`taskly.users` 47行、`taskly_auth.users` 0行で、両方とも `deleted_at` はまだない。先に Taskly 側の DB migration が本番へ適用されたことを確認し、その後に空の認証 DB へ上記の列を追加する。適用前にコピーを再実行しない。現時点の認証 DB の行は変更していない。
+2026-09-23 の本番読み取り専用確認では、`taskly.users` 47行、`taskly_auth.users` 0行で、両方とも `deleted_at` はまだなかった。2026-09-24 に Taskly 側の migration 適用を確認した後、0行の `taskly_auth.users` に `deleted_at DATETIME NULL` を追加した。両 DB で同列は ordinal position 13、nullable で一致し、確認後も利用者件数は47行と0行のままである。実ユーザーのコピーはまだ実行していない。
 
 稼働中に手順を試す場合は、**本番切り替え先とは別の空DB**を用意して `AUTH_MIGRATION_MODE=snapshot migrate-auth` を実行します。元DBの `REPEATABLE READ` 読み取り専用トランザクションから一貫したスナップショットをコピーし、ログにも「切り替え不可」と記録します。元サービスの書き込みは止めません。この DB は検証用であり、新しいユーザー更新を含む正本にはなりません。
 
@@ -144,6 +144,8 @@ docker run --rm --read-only --network infra_default \
 同日、TOTP 管理を追加したコミット `54fa181b23a12fad3fc9ffb937886e13b9f43618` は PR と手動ワークフロー `35805587467` で Go テスト、静的解析、独立 MySQL の設定・MFAログイン・無効化スモーク、イメージ作成が成功した。非公開成果物の転送前後 SHA-256 `345738b701ef6b67af6a6dad761c39388cd53edec201da3716228a7539b37afe` を照合して内部ステージングに配置した。コンテナは healthy、ホスト公開ポートなし、内部 `/healthz` と `/security` は200、`/auth/totp/status` は移行ゲートで503。起動時に `auth_totp_setups` が作成され、旧 DB は47ユーザー、新認証 DBは0ユーザーを維持した。本番 Nginx に残っていた監視用ポート `3067` / `3068` への古い upstream を、予約済みの `3070` / `3071` に修正し、構文検査後に再読込した。公開 API、旧 UI、新 UI はいずれも TLS 検証成功の503である。
 
 同日、ブロック同期を追加したコミット `945fe2dbbb56488e55ba156c0744fce87f26548a` は PR と手動ワークフロー `35819720289` で Go テスト、静的解析、独立 MySQL のブロック・session 失効・解除を含む全スモーク、イメージ作成が成功した。成果物の転送前後 SHA-256 `6f515675edd9d2421278d8c86dd797e2e7d2280116e719a063a64437d62771fb` を照合し、内部ステージングへ配置した。コンテナは healthy、ホスト公開ポートなし、内部 `/healthz` と `/security` は200、internal block API は移行ゲートで503。公開 API、旧 UI、新 UI も503を維持した。旧 DB は47ユーザー、新認証 DBは0ユーザーである。空の認証 DB に `blocks` はまだ存在しないが、`migrate-auth` は最終コピー時に source の `SHOW CREATE TABLE` から不足テーブルを作成してから全列を照合する。`AUTH_MIGRATION_READY=1` とブロック同期フラグは、最終コピーで7テーブルが作成・照合されるまで有効にしない。
+
+2026-09-24 にアカウント退会・消去同期を追加したコミット `2ba607989b87d5beae4f1c5d3657c3ae4c8f0eba` は PR と手動ワークフロー `35945112287` で Go テスト、静的解析、独立 MySQL の退会、再ログイン拒否、冪等な物理消去を含む全スモーク、イメージ作成が成功した。成果物の転送前後 SHA-256 `ce7df85e89d73fa53da9267d54cb24e9187e778ebce549b9bacfe950549ba185` を照合し、内部ステージングへ配置した。コンテナは healthy、ホスト公開ポートなし、内部 `/healthz` と `/security` は200、internal lifecycle API は移行ゲートで503。公開 API と UI も503を維持した。旧 DB は47ユーザー、新認証 DBは0ユーザーのままである。`AUTH_MIGRATION_READY` と lifecycle 同期フラグは有効化していない。
 
 ## ロールバック
 
