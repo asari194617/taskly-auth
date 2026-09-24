@@ -34,6 +34,7 @@ OAuth client secret とは別の `AUTH_INTERNAL_TOKEN` を Bearer token とし�
 
 - 対象行をロックし、メール一意性と値を検証して更新する。同じ要求の再送は成功する。
 - メール変更時は新旧メールの未使用コードを使用済みにし、旧 Taskly session、認証 session、challenge、WebAuthn session、OAuth code を削除し、OAuth access / refresh token を失効する。再認証後だけ新メールで利用できる。
+- 初回の認証サービスログインで auth 側の `is_registered=1` を保存し、OAuth callback 成功時に Taskly shadow 行も同じ状態へ更新する。
 - 存在しない ID は404、メール競合は409、不正値は400とする。
 
 Taskly は認証 DB を先に更新し、その後 app DB を更新する。後段が失敗した場合は認証側の安全な状態を戻さず「同期保留」を返す。同じ管理操作の再送で app DB を収束させる。

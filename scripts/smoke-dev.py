@@ -93,6 +93,18 @@ def internal_lifecycle_request(user_id, payload=None, token=internal_token):
         return exc
 
 
+def internal_user_request(method, path, payload=None, token=internal_token):
+    data = None if payload is None else json.dumps(payload).encode()
+    headers = {"Authorization": "Bearer " + token}
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(api + path, data, headers, method=method)
+    try:
+        return opener.open(req)
+    except urllib.error.HTTPError as exc:
+        return exc
+
+
 def totp_code(secret):
     padding = "=" * ((8 - len(secret) % 8) % 8)
     key = base64.b32decode(secret + padding)
@@ -361,5 +373,45 @@ response = internal_lifecycle_request(user_id)
 assert response.status == 204, response.read()
 response = internal_lifecycle_request(user_id)
 assert response.status == 204, response.read()
+
+projection_email = "projection-smoke@example.test"
+response = internal_user_request("POST", "/internal/users", {
+    "email": projection_email, "display_name": "Projection Smoke", "notification_lang": "ja",
+})
+assert response.status == 201, response.read()
+projection = json.load(response)
+assert projection["created"] is True
+projection_id = projection["id"]
+response = internal_user_request("POST", "/internal/users", {
+    "email": projection_email, "display_name": "Ignored Retry", "notification_lang": "en",
+})
+assert response.status == 200, response.read()
+retry = json.load(response)
+assert retry == {"created": False, "id": projection_id}, retry
+response = internal_user_request("PATCH", f"/internal/users/{projection_id}", {
+    "email": "projection-updated@example.test", "display_name": "Updated Projection",
+    "notification_lang": "en", "email_code_allowed": False,
+})
+assert response.status == 200, response.read()
+response = internal_user_request("POST", "/internal/users", {
+    "email": "projection-conflict@example.test", "display_name": "Conflict", "notification_lang": "ja",
+})
+assert response.status == 201, response.read()
+conflict_id = json.load(response)["id"]
+response = internal_user_request("PATCH", f"/internal/users/{conflict_id}", {
+    "email": "projection-updated@example.test",
+})
+assert response.status == 409, response.read()
+projection_deleted_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+response = internal_lifecycle_request(
+    projection_id, {"deleted": True, "deleted_at": projection_deleted_at}
+)
+assert response.status == 200, response.read()
+assert internal_lifecycle_request(projection_id).status == 204
+response = internal_lifecycle_request(
+    conflict_id, {"deleted": True, "deleted_at": projection_deleted_at}
+)
+assert response.status == 200, response.read()
+assert internal_lifecycle_request(conflict_id).status == 204
 
 print("OAuth 2.1 local smoke passed")

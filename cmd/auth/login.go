@@ -247,7 +247,27 @@ func (a *app) finishLogin(w http.ResponseWriter, r *http.Request, id uint64) {
 		return
 	}
 	expires := time.Now().UTC().Add(12 * time.Hour)
-	_, err = a.db.ExecContext(r.Context(), `INSERT INTO auth_sessions (token_hash,user_id,expires_at,created_at) VALUES (?,?,?,?)`, digest(token), id, expires, time.Now().UTC())
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		oauthError(w, 500, "server_error")
+		a.alerts.send("Taskly auth session storage failed")
+		return
+	}
+	defer tx.Rollback()
+	var deleted bool
+	err = tx.QueryRowContext(r.Context(), `SELECT is_deleted FROM users WHERE id=? FOR UPDATE`, id).Scan(&deleted)
+	if err == nil && deleted {
+		err = sql.ErrNoRows
+	}
+	if err == nil {
+		_, err = tx.ExecContext(r.Context(), `UPDATE users SET is_registered=1 WHERE id=?`, id)
+	}
+	if err == nil {
+		_, err = tx.ExecContext(r.Context(), `INSERT INTO auth_sessions (token_hash,user_id,expires_at,created_at) VALUES (?,?,?,?)`, digest(token), id, expires, time.Now().UTC())
+	}
+	if err == nil {
+		err = tx.Commit()
+	}
 	if err != nil {
 		oauthError(w, 500, "server_error")
 		a.alerts.send("Taskly auth session storage failed")
