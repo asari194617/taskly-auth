@@ -1,0 +1,50 @@
+services:
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${AUTH_DB_ROOT_PASSWORD:-auth_dev_root}
+      MYSQL_DATABASE: taskly_auth
+      MYSQL_USER: auth
+      MYSQL_PASSWORD: ${AUTH_DB_PASSWORD:-auth_dev_password}
+      TZ: Asia/Tokyo
+    volumes:
+      - auth-db-data:/var/lib/mysql
+      - ./schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+    ports:
+      - "127.0.0.1:3307:3306"
+    healthcheck:
+      # The initialization server listens only on a Unix socket; wait for final TCP startup.
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--protocol=tcp"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  auth:
+    build: .
+    env_file: .env
+    environment:
+      AUTH_ADDR: 0.0.0.0:3067
+      AUTH_DSN: auth:${AUTH_DB_PASSWORD:-auth_dev_password}@tcp(db:3306)/taskly_auth?parseTime=true&charset=utf8mb4&loc=UTC
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3067:3067"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3067/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+  ui:
+    build: ./apps/web
+    environment:
+      VITE_AUTH_API_URL: http://localhost:3067
+    ports:
+      - "127.0.0.1:3068:3068"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3068/login"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  auth-db-data:

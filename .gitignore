@@ -1,0 +1,8 @@
+.env
+.env.*
+!.env.example
+bin/
+*.log
+__pycache__/
+apps/web/dist/
+apps/web/node_modules/

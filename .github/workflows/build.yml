@@ -1,0 +1,108 @@
+name: build
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test ./...
+      - run: go vet ./...
+  ui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.18.0
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+        env:
+          VITE_AUTH_API_URL: https://taskly-auth-api.iy0306.com
+  oauth-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Start development auth service
+        run: |
+          cp .env.example .env
+          sed -i 's|^OAUTH_PUBLIC_CLIENTS_JSON=.*|OAUTH_PUBLIC_CLIENTS_JSON=[{"client_id":"taskly-dev","redirect_uri":"http://127.0.0.1/callback"}]|' .env
+          docker compose up -d --build
+          for attempt in $(seq 1 90); do
+            if curl -fsS http://localhost:3067/healthz && curl -fsS http://localhost:3068/login >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS http://localhost:3067/healthz
+          curl -fsS http://localhost:3068/login >/dev/null
+      - name: Seed development account and exercise confidential and public clients
+        env:
+          AUTH_DSN: auth:auth_dev_password@tcp(127.0.0.1:3307)/taskly_auth?parseTime=true&charset=utf8mb4&loc=UTC
+          AUTH_DEV_EMAIL: oauth-ci@example.test
+          AUTH_DEV_PASSWORD: oauth-ci-password
+          OAUTH_DEV_PUBLIC_CLIENT_ID: taskly-dev
+          OAUTH_DEV_PUBLIC_REDIRECT_URI: http://127.0.0.1:8765/callback
+        run: |
+          go run ./cmd/seed-dev
+          python3 scripts/smoke-dev.py
+      - name: Diagnose failed auth startup
+        if: failure()
+        run: |
+          docker compose ps
+          docker compose logs --no-color --tail=80 auth db ui
+      - name: Stop development auth service
+        if: always()
+        run: docker compose down -v
+  image:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: [test, ui]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/asari194617/taskly-auth:${{ github.sha }}
+      - name: Save private image for production-host staging
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          docker pull ghcr.io/asari194617/taskly-auth:${{ github.sha }}
+          docker save ghcr.io/asari194617/taskly-auth:${{ github.sha }} -o "$RUNNER_TEMP/taskly-auth-image.tar"
+      - uses: actions/upload-artifact@v7
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: taskly-auth-image-${{ github.sha }}
+          path: ${{ runner.temp }}/taskly-auth-image.tar
+          retention-days: 3
+          compression-level: 0
