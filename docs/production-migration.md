@@ -45,6 +45,8 @@ API は `issuer` が `https://taskly-auth-api.iy0306.com` の JSON、UI は認�
 
 2026-09-25 に Vite UI を R2 へ初回デプロイし、R2 custom domain の Active を確認した。`/` は `/login` へ302、`/login`、`/security`、`/passkeys`、`/logout` は200となり、MIME type、ページとアセットの Cache-Control、セキュリティヘッダーを確認した。認証 API は引き続き503ゲートを維持している。この作業では認証 DB のコピーと切り替えフラグを変更していない。
 
+同日、main の手動 build workflow `36102884473` で UI test/build、Go test/vet、MySQL を使う OAuth smoke、Linux/amd64 イメージ作成がすべて成功した。成果物 `89b0383bd3b1b6b7a68eaa597e918e3199c35e00` の転送前後 SHA-256 `3c885756271b8210714d3ef85bf359c0da3c4c3213a02adacae1db954d1a37ea` を照合し、公開ポートを持たない内部ステージングへ配置した。コンテナは read-only かつ healthy、内部 `/healthz` は200、`/oauth/authorize` は移行ゲートで503、公開 UI は200、公開 API は503を維持した。Taskly DB は47ユーザー、認証DBは0ユーザーで、認証データのコピーと切り替えは行っていない。
+
 本番 OAuth 設定値は `AUTH_ISSUER=https://taskly-auth-api.iy0306.com`、`AUTH_UI_URL=https://auth.taskly.iy0306.com`、`OAUTH_REDIRECT_URI=https://api.taskly.iy0306.com/auth/oauth/callback`、Taskly 側の `WEB_PUBLIC_URL=https://taskly.iy0306.com` です。WebAuthn は `WEBAUTHN_RP_ID=taskly.iy0306.com` を維持し、検証 origin に `AUTH_UI_URL` の値を正確に使用します。Taskly 側の本番環境設定は現行のリポジトリ直下 `.env.production` を暗号化してデプロイする方式であり、`apps/server/.env.production` ではありません。
 
 ## 公開前のホスト内検証
