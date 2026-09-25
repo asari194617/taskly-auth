@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 
@@ -42,6 +41,10 @@ func main() {
 	if dsn == "" {
 		alerts.sendSync("Taskly auth startup failed: missing database configuration")
 		log.Fatal("AUTH_DSN is required")
+	}
+	if err := validateAuthDSN(dsn); err != nil {
+		alerts.sendSync("Taskly auth startup failed: database time configuration invalid")
+		log.Fatal("auth DB configuration invalid: ", err)
 	}
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
