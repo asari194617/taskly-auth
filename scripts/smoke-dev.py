@@ -264,7 +264,7 @@ if public_client_id and public_redirect_uri:
 
 response = request(ui + "/security")
 assert response.status == 200
-assert b"/security.js" in response.read()
+assert b"/src/security.ts" in response.read()
 response = ui_json_request("/auth/email-code/settings")
 assert response.status == 200
 assert json.load(response)["enabled"] is False
@@ -352,7 +352,7 @@ assert json.load(response)["active"] is False
 
 response = request(ui + "/logout")
 assert response.status == 200, response.status
-assert b"/logout.js" in response.read()
+assert b"/src/logout.ts" in response.read()
 response = request(api + "/auth/logout", {}, {"Origin": ui, "X-Auth-UI": "1"})
 assert response.status == 204, response.read()
 response = request(api + "/oauth/authorize?" + params)
