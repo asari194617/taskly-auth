@@ -83,7 +83,6 @@ def main() -> None:
         "OAUTH_CLIENT_ID": "taskly-web",
         "OAUTH_CLIENT_SECRET": client_secret,
         "OAUTH_REDIRECT_URI": "https://api.taskly.iy0306.com/auth/oauth/callback",
-        "LEGACY_LOGIN_URL": "https://taskly.iy0306.com/login",
         **inherited,
     }
 

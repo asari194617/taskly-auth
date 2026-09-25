@@ -134,25 +134,7 @@ func main() {
 	api.HandleFunc("PATCH /internal/users/{id}", a.updateUserProjection)
 	api.HandleFunc("PUT /internal/users/{id}/lifecycle", a.syncUserLifecycle)
 	api.HandleFunc("DELETE /internal/users/{id}", a.eraseUser)
-	ui := http.NewServeMux()
-	ui.HandleFunc("GET /healthz", a.health)
-	ui.HandleFunc("GET /login", a.loginPage)
-	ui.HandleFunc("GET /login.js", a.loginJS)
-	ui.HandleFunc("GET /passkeys", a.passkeysPage)
-	ui.HandleFunc("GET /passkeys.js", a.passkeysJS)
-	ui.HandleFunc("GET /security", a.securityPage)
-	ui.HandleFunc("GET /security.js", a.securityJS)
-	ui.HandleFunc("GET /logout", a.logoutPage)
-	ui.HandleFunc("GET /logout.js", a.logoutJS)
-	ui.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/login", http.StatusFound) })
 	apiServer := &http.Server{Addr: env("AUTH_ADDR", "127.0.0.1:3067"), Handler: a.wrapAPI(api), ReadHeaderTimeout: 5 * time.Second}
-	uiServer := &http.Server{Addr: env("UI_ADDR", "127.0.0.1:3068"), Handler: ui, ReadHeaderTimeout: 5 * time.Second}
-	go func() {
-		if err := uiServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
-			log.Print(err)
-			a.alerts.send("Taskly auth UI unavailable")
-		}
-	}()
 	log.Printf("auth API listening on %s", apiServer.Addr)
 	if err := apiServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		alerts.sendSync("Taskly auth API unavailable")

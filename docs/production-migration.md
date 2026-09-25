@@ -18,11 +18,11 @@ Cloudflare の DNS で以下を設定します。証明書発行時は DNS only 
 | A | `taskly-auth-api` | `133.242.49.12` | DNS only | Auto |
 | A | `auth.taskly` | `133.242.49.12` | DNS only | Auto |
 
-各ホストの Nginx vhost は `deploy/nginx/` に保存します。切り替え後は UI を `127.0.0.1:3071`、API を `127.0.0.1:3070` に proxy します。コンテナ内の待受ポートはそれぞれ `3068` と `3067` のままです。ホストの `3067`～`3069` は既存の監視サービスに割り当てられています。新 UI ホストは切り替え前に明示的な503と `Retry-After` を返し、HTTP は HTTPS にリダイレクトします。OAuth の移行ゲートが整うまで本番 OAuth redirect は有効にしません。
+API の Nginx vhost は `deploy/nginx/` に保存し、`127.0.0.1:3070` へ proxy します。UI は [認証 UI の静的配信仕様](static-ui-r2.md) に従って Vite の成果物を Cloudflare R2 から配信し、Go コンテナの UI ポートは公開しません。`auth.taskly.iy0306.com` は R2 custom domain を接続するまで本番ホストの明示的な503と `Retry-After` を維持します。OAuth の移行ゲートが整うまで本番 OAuth redirect は有効にしません。
 
 ### 公開先の確認 (2026-09-21)
 
-DNS 登録後、両ホストの A 応答は Cloudflare の proxy IP になり、公開 `/healthz` は HTTPS 200 (`ok`) を返しました。ただし公開 UI の `/login` と API の `/.well-known/oauth-authorization-server` は 404 (`Cannot GET ...`) です。さらに `133.242.49.12` へ直接接続した際の API ホスト名は TLS 証明書が一致せず、同ホストに認証サービスの Docker コンテナと Nginx vhost はありませんでした。**公開 `/healthz` の 200 だけでは認証サービスへの到達を証明できません。** Cloudflare の当該 DNS レコードの Content と、該当する Origin Rule、Worker Route、Redirect Rule を確認してください。Cloudflare proxy の応答から元の A レコードの Content は読み取れません。
+DNS 登録後、両ホストの A 応答は Cloudflare の proxy IP になり、公開 `/healthz` は HTTPS 200 (`ok`) を返しました。ただし公開 UI の `/login` と API の `/.well-known/oauth-authorization-server` は 404 (`Cannot GET ...`) でした。さらに `133.242.49.12` へ直接接続した際の API ホスト名は TLS 証明書が一致せず、同ホストに認証サービスの Docker コンテナと Nginx vhost はありませんでした。**公開 `/healthz` の 200 だけでは認証サービスへの到達を証明できません。** Cloudflare の当該 DNS レコードの Content と、該当する Origin Rule、Worker Route、Redirect Rule を確認してください。Cloudflare proxy の応答から元の A レコードの Content は読み取れません。
 
 その後ユーザーが両レコードを DNS only に変更しました。`1.1.1.1` と `8.8.8.8` から両ホストの A レコードが `133.242.49.12` を返すことを確認しました。初回の HTTP はオリジン Nginx の 404、HTTPS は証明書のホスト名不一致でした。
 

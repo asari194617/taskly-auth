@@ -150,7 +150,7 @@ assert response.status == 200, response.status
 
 response = request(ui + "/passkeys")
 assert response.status == 200, response.status
-assert b"/passkeys.js" in response.read()
+assert b"/src/passkeys.ts" in response.read()
 response = ui_json_request("/auth/passkeys")
 assert response.status == 200, response.read()
 assert json.load(response)["passkeys"] == []

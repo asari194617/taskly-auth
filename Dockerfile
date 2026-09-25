@@ -11,5 +11,5 @@ RUN apk add --no-cache ca-certificates
 COPY --from=build /out/auth /usr/local/bin/auth
 COPY --from=build /out/migrate-auth /usr/local/bin/migrate-auth
 USER 65532:65532
-EXPOSE 3067 3068
+EXPOSE 3067
 ENTRYPOINT ["/usr/local/bin/auth"]

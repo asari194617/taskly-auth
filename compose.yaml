@@ -23,16 +23,25 @@ services:
     env_file: .env
     environment:
       AUTH_ADDR: 0.0.0.0:3067
-      UI_ADDR: 0.0.0.0:3068
       AUTH_DSN: auth:${AUTH_DB_PASSWORD:-auth_dev_password}@tcp(db:3306)/taskly_auth?parseTime=true&charset=utf8mb4&loc=UTC
     depends_on:
       db:
         condition: service_healthy
     ports:
       - "127.0.0.1:3067:3067"
-      - "127.0.0.1:3068:3068"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3067/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+  ui:
+    build: ./apps/web
+    environment:
+      VITE_AUTH_API_URL: http://localhost:3067
+    ports:
+      - "127.0.0.1:3068:3068"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3068/login"]
       interval: 15s
       timeout: 5s
       retries: 3
