@@ -13,6 +13,11 @@ services:
     ports:
       - "127.0.0.1:3070:3067"
     restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3067/healthz"]
       interval: 15s
