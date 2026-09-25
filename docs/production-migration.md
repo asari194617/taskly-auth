@@ -168,6 +168,10 @@ sudo python3 /home/ubuntu/taskly-auth/scripts/check_release_readiness.py \
 
 同じイメージで新規の `taskly_auth_rehearsal_20260924` に本番ソースの読み取り専用スナップショットをコピーした。`users`, `totp_secrets`, `recovery_codes`, `passkeys`, `login_codes`, `sessions`, `blocks` は順に `47, 1, 10, 1, 23, 69, 2` 行で、各テーブルの SHA-256 がコピー元と一致した。直後の read-only verify でも7テーブルが一致した。本番の切り替え先 `taskly_auth.users` は0行のままで、書き込み停止をしていないため、この結果は最終コピーの承認ではない。
 
+2026-09-25 に認証イメージ `02a02b4a6bfcfb56d9895c29f5d4b3fdf097689f` と Taskly API `abf87ca179717f75395fa5657c4e05655f2e68bc` を本番へ配置した。Taskly の OAuth client、内部同期 URL、共有 token は設定済みで、`AUTH_WRITES_PAUSED=0` と8個の所有権フラグはすべて0、認証サービスの `AUTH_MIGRATION_READY=0` を維持した。`check_release_readiness.py` はコンテナ hardening、内部通信、公開 health・metadata、503/404 gate、環境ファイル、バックアップ cron、元DBのユーザー保持、空の切り替え先を含む全項目で `READY` となった。本番切り替え先 `taskly_auth.users` は0行で、既存ユーザーの正本は引き続きTaskly DBである。
+
+同日、別の新規DB `taskly_auth_release_20260925` に現在の本番ソースを読み取り専用スナップショットとしてコピーした。7テーブルの件数は順に `47, 1, 10, 1, 23, 69, 2` で、コピー時の件数と SHA-256 がすべて一致した。直後の `AUTH_MIGRATION_MODE=verify` でも全件一致した。書き込み停止をしていないため、この結果は手順とデータ互換性の検証であり、最終コピーや切り替えの承認ではない。
+
 ## ロールバック
 
 Taskly Web の OAuth リンクを非表示にし、旧ログインを維持します。新認証 DB 側で行われたパスワード変更、復旧コード消費、TOTP 設定、メールログイン設定などがあれば、旧 DB に安全に反映してから旧方式を正本に戻します。source と target のバックアップを保持し、単純な上書き復元で新しい更新を失わないようにします。
