@@ -10,15 +10,15 @@
 
 ## DNS
 
-Cloudflare の DNS で以下を設定します。証明書発行時は DNS only とし、認証サービスの公開検証後に Cloudflare proxy を使う場合は Full (strict) にします。公開予定の UI は `auth.taskly`、`taskly-auth` は旧予定ホストとして503のまま維持します。
+Cloudflare の DNS と R2 custom domain で以下を設定します。API と旧予定 UI は本番ホストを向け、新 UI は R2 が管理する custom domain とします。
 
-| Type | Name | Content | Proxy status | TTL |
-| --- | --- | --- | --- | --- |
-| A | `taskly-auth` | `133.242.49.12` | DNS only | Auto |
-| A | `taskly-auth-api` | `133.242.49.12` | DNS only | Auto |
-| A | `auth.taskly` | `133.242.49.12` | DNS only | Auto |
+| 用途 | Type | Name | Content | Proxy status | TTL |
+| --- | --- | --- | --- | --- | --- |
+| 旧予定 UI | A | `taskly-auth` | `133.242.49.12` | DNS only | Auto |
+| 認証 API | A | `taskly-auth-api` | `133.242.49.12` | DNS only | Auto |
+| 新 UI | CNAME (Cloudflare managed) | `auth.taskly` | R2 custom domain | Proxied | Auto |
 
-API の Nginx vhost は `deploy/nginx/` に保存し、`127.0.0.1:3070` へ proxy します。UI は [認証 UI の静的配信仕様](static-ui-r2.md) に従って Vite の成果物を Cloudflare R2 から配信し、Go コンテナの UI ポートは公開しません。`auth.taskly.iy0306.com` は R2 custom domain を接続するまで本番ホストの明示的な503と `Retry-After` を維持します。OAuth の移行ゲートが整うまで本番 OAuth redirect は有効にしません。
+API の Nginx vhost は `deploy/nginx/` に保存し、`127.0.0.1:3070` へ proxy します。UI は [認証 UI の静的配信仕様](static-ui-r2.md) に従って Vite の成果物を Cloudflare R2 から配信し、Go コンテナの UI ポートは公開しません。2026-09-25 に `auth.taskly.iy0306.com` を R2 custom domain へ切り替えたため、このホストは本番サーバーの Nginx を経由しません。認証 API は OAuth の移行ゲートが整うまで 503 と `Retry-After` を維持します。
 
 ### 公開先の確認 (2026-09-21)
 
@@ -30,20 +30,20 @@ DNS 登録後、両ホストの A 応答は Cloudflare の proxy IP になり、
 
 2026-09-22 に追加された `auth.taskly.iy0306.com` の A レコードが `1.1.1.1` と `8.8.8.8` から `133.242.49.12` を返すことを確認した。同ホスト専用の Nginx vhost と Let's Encrypt 証明書を配置した。証明書は 2026-12-21 まで有効で、Certbot の更新 dry run、`nginx -t`、HTTP 301、証明書検証付きの HTTPS 503、オリジン直結の HTTPS 503 が成功した。新ホストは公開ポートの認証コンテナへ接続せず、明示的な503ゲートを維持している。
 
-認証コンテナの配置後、オリジンと Cloudflare 経由の双方で以下を確認します。証明書が一致しない場合は `-k` で検査を通さず、証明書と vhost を修正してから再試行します。
+認証コンテナの配置後、API はオリジンと公開 URL の双方、UI は R2 custom domain で確認します。証明書が一致しない場合は `-k` で検査を通さず、証明書と配信設定を修正してから再試行します。
 
 ```sh
 curl --resolve taskly-auth-api.iy0306.com:443:133.242.49.12 \
   https://taskly-auth-api.iy0306.com/.well-known/oauth-authorization-server
 curl --resolve taskly-auth.iy0306.com:443:133.242.49.12 \
   https://taskly-auth.iy0306.com/login
-curl --resolve auth.taskly.iy0306.com:443:133.242.49.12 \
-  https://auth.taskly.iy0306.com/login
 curl https://taskly-auth-api.iy0306.com/.well-known/oauth-authorization-server
 curl https://auth.taskly.iy0306.com/login
 ```
 
-API は `issuer` が `https://taskly-auth-api.iy0306.com` の JSON、UI は認証画面を返すことを確認します。DNS レコードの Content は両方 `133.242.49.12` とし、別の Cloudflare ルートが割り込まないようにします。
+API は `issuer` が `https://taskly-auth-api.iy0306.com` の JSON、UI は認証画面を返すことを確認します。`auth.taskly.iy0306.com` を `133.242.49.12` へ `--resolve` する検査は旧 Nginx の退避経路の確認に限り、R2 の公開確認には使いません。
+
+2026-09-25 に Vite UI を R2 へ初回デプロイし、R2 custom domain の Active を確認した。`/` は `/login` へ302、`/login`、`/security`、`/passkeys`、`/logout` は200となり、MIME type、ページとアセットの Cache-Control、セキュリティヘッダーを確認した。認証 API は引き続き503ゲートを維持している。この作業では認証 DB のコピーと切り替えフラグを変更していない。
 
 本番 OAuth 設定値は `AUTH_ISSUER=https://taskly-auth-api.iy0306.com`、`AUTH_UI_URL=https://auth.taskly.iy0306.com`、`OAUTH_REDIRECT_URI=https://api.taskly.iy0306.com/auth/oauth/callback`、Taskly 側の `WEB_PUBLIC_URL=https://taskly.iy0306.com` です。WebAuthn は `WEBAUTHN_RP_ID=taskly.iy0306.com` を維持し、検証 origin に `AUTH_UI_URL` の値を正確に使用します。Taskly 側の本番環境設定は現行のリポジトリ直下 `.env.production` を暗号化してデプロイする方式であり、`apps/server/.env.production` ではありません。
 

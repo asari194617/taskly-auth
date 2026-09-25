@@ -105,6 +105,19 @@ Repository environment `production-ui` に次を登録する。
 
 Pull Request では UI の test と build までを実行し、R2 へは書き込まない。production environment の secret は Pull Request workflow へ渡さない。
 
+### 初回デプロイ実績 (2026-09-25)
+
+- 非公開 bucket `taskly-auth-ui` を APAC / Standard で作成し、公開開発用 `r2.dev` URL は無効のままとした。
+- bucket 限定の Object Read & Write credential と `R2_BUCKET=taskly-auth-ui` を GitHub の `production-ui` environment に登録した。
+- PR #1 を merge commit `7832e2b4f9859674c71f3789ef3775df78df7875` で main に反映した。
+- main の build workflow `36096399918` と R2 deploy workflow `36096400056` は成功した。
+- `auth.taskly.iy0306.com` を R2 custom domain として接続し、Cloudflare 上で Active を確認した。従来の同名 A レコードは Cloudflare 管理の R2 向けレコードへ置き換わった。
+- Single Redirect `taskly-auth-ui-root` と Response Header Transform Rule `taskly-auth-ui-security-headers` を有効化した。
+
+公開 URL の実測では `/` が `/login` へ 302、`/login`、`/security`、`/passkeys`、`/logout` が HTTPS 200 を返した。HTML は `Content-Type: text/html; charset=utf-8` と `Cache-Control: no-cache`、ハッシュ付き JavaScript/CSS は正しい MIME type と `Cache-Control: public, max-age=31536000, immutable` を返した。5種類のセキュリティヘッダーも全経路で確認した。ブラウザーで `/login` を開き、CSP 違反を含む console warning/error がないことを確認した。
+
+認証 API の `/.well-known/oauth-authorization-server` は引き続き 503 と `Retry-After: 3600` を返している。静的 UI の公開では認証 DB のコピー、移行フラグ、Taskly 側 OAuth 設定を変更していない。
+
 ## セキュリティヘッダー
 
 R2 の custom domain に Cloudflare Response Header Transform Rules を設定する。
