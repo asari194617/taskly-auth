@@ -17,6 +17,7 @@ jobs:
           cache: true
       - run: go test ./...
       - run: go vet ./...
+      - run: python3 -m unittest scripts/test_check_release_readiness.py
   ui:
     runs-on: ubuntu-latest
     defaults:

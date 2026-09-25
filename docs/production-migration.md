@@ -124,6 +124,15 @@ docker run --rm --read-only --network infra_default \
 
 ## 切り替えのゲート
 
+本番切り替えの直前状態は、ホストで次の読み取り専用検査を実行する。環境ファイルの値やユーザーデータは出力しない。全項目が `PASS` となり、最後に `READY` が表示されるまで書き込み停止と最終コピーへ進まない。
+
+```sh
+sudo python3 /home/ubuntu/taskly-auth/scripts/check_release_readiness.py \
+  --expected-auth-tag <reviewed-main-commit-sha>
+```
+
+この検査は、認証APIの503ゲート、Taskly側の8個の所有権フラグがすべて0であること、OAuth client secretと内部同期tokenの一致、DSNのUTC設定、コンテナのhardening、内部ネットワーク、元DBのユーザー保持、空の切り替え先DB、公開URL、バックアップcronを一括確認する。最終コピー後は対象DBが空でなくなるため、この事前検査を再実行せず、コピーの `verify` と切り替え後の機能試験を使う。
+
 切り替え前に以下を実証します。
 
 - ユーザー ID、件数、ハッシュ、パスワード認証、メールコード、TOTP、復旧コード、ブロック判定を照合する。
