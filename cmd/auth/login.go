@@ -343,6 +343,10 @@ func (a *app) requestCode(w http.ResponseWriter, r *http.Request) {
 }
 
 func sendLoginCode(email, code string) error {
+	return sendMailCode(email, code, "authentication")
+}
+
+func sendMailCode(email, code, purpose string) error {
 	host := env("SMTP_HOST", "")
 	port := env("SMTP_PORT", "587")
 	from := env("SMTP_FROM", "")
@@ -354,7 +358,10 @@ func sendLoginCode(email, code string) error {
 	if user := env("SMTP_USER", ""); user != "" {
 		auth = smtp.PlainAuth("", user, env("SMTP_PASSWORD", ""), host)
 	}
-	message := []byte("From: " + from + "\r\nTo: " + email + "\r\nSubject: Taskly authentication code\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\nYour Taskly authentication code is " + code + ". It expires in 10 minutes.\r\n")
+	if purpose != "authentication" && purpose != "email verification" {
+		return errors.New("invalid email purpose")
+	}
+	message := []byte("From: " + from + "\r\nTo: " + email + "\r\nSubject: Taskly " + purpose + " code\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\nYour Taskly " + purpose + " code is " + code + ". It expires in 10 minutes.\r\n")
 	mode := strings.ToLower(env("SMTP_TLS", "starttls"))
 	var conn net.Conn
 	var err error

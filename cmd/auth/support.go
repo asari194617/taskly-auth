@@ -112,6 +112,7 @@ func (a *alerter) deliver(message string) {
 
 func (a *app) ensureOAuthSchema(ctx context.Context) error {
 	statements := []string{
+		`CREATE TABLE IF NOT EXISTS auth_email_verifications (user_id BIGINT UNSIGNED PRIMARY KEY, email VARCHAR(255) NOT NULL, hashed_code CHAR(64), expires_at DATETIME, failed_attempts INT NOT NULL DEFAULT 0, verified_at DATETIME, requested_at DATETIME, INDEX idx_auth_email_verifications_email (email))`,
 		`CREATE TABLE IF NOT EXISTS auth_login_codes (id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT, email VARCHAR(255) NOT NULL, hashed_code VARCHAR(255) NOT NULL, expires_at DATETIME NOT NULL, consumed_at DATETIME, failed_attempts INT NOT NULL DEFAULT 0, locked_until DATETIME, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX idx_auth_login_codes_email (email))`,
 		`CREATE TABLE IF NOT EXISTS oauth_authorization_requests (id_hash CHAR(64) PRIMARY KEY, client_id VARCHAR(128) NOT NULL, redirect_uri VARCHAR(2048) NOT NULL, state_value VARCHAR(2048) NOT NULL, code_challenge VARCHAR(128) NOT NULL, scope_value VARCHAR(255) NOT NULL, expires_at DATETIME NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
 		`CREATE TABLE IF NOT EXISTS oauth_codes (code_hash CHAR(64) PRIMARY KEY, user_id BIGINT UNSIGNED NOT NULL, client_id VARCHAR(128) NOT NULL, redirect_uri VARCHAR(2048) NOT NULL, code_challenge VARCHAR(128) NOT NULL, scope_value VARCHAR(255) NOT NULL, expires_at DATETIME NOT NULL, used_at DATETIME, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
