@@ -125,6 +125,7 @@ func (a *app) applyDeletedState(ctx context.Context, userID uint64, requestedAt 
 		`DELETE FROM auth_challenges WHERE user_id=?`,
 		`DELETE FROM auth_webauthn_sessions WHERE user_id=?`,
 		`DELETE FROM auth_totp_setups WHERE user_id=?`,
+		`DELETE FROM auth_email_verifications WHERE user_id=?`,
 		`DELETE FROM oauth_codes WHERE user_id=?`,
 		`UPDATE oauth_access_tokens SET revoked_at=COALESCE(revoked_at,UTC_TIMESTAMP()) WHERE user_id=?`,
 		`UPDATE oauth_refresh_tokens SET revoked_at=COALESCE(revoked_at,UTC_TIMESTAMP()) WHERE user_id=?`,
@@ -164,7 +165,7 @@ func (a *app) eraseDeletedUser(ctx context.Context, userID uint64) error {
 		return errUserNotDeleted
 	}
 	for _, table := range []string{
-		"auth_totp_setups", "auth_webauthn_sessions", "auth_challenges", "auth_sessions",
+		"auth_totp_setups", "auth_email_verifications", "auth_webauthn_sessions", "auth_challenges", "auth_sessions",
 		"oauth_codes", "oauth_access_tokens", "oauth_refresh_tokens", "sessions", "blocks",
 		"recovery_codes", "totp_secrets", "passkeys",
 	} {

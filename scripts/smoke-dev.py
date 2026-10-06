@@ -131,10 +131,10 @@ request_id = urllib.parse.parse_qs(urllib.parse.urlparse(login_url).query)["requ
 
 response = request(login_url)
 assert response.status == 200, response.status
-assert b'id="email"' in response.read()
+assert b'id="app"' in response.read()
 response = request(ui + "/password")
 assert response.status == 200, response.status
-assert b'id="passkey"' in response.read()
+assert b'id="app"' in response.read()
 passkey_begin = ui_json_request("/auth/passkey/begin", {"email": email})
 assert passkey_begin.status == 401, passkey_begin.read()
 assert ui_json_request("/auth/passkeys").status == 401
