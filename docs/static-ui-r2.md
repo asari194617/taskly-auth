@@ -39,7 +39,10 @@ R2 では要求パスと同じオブジェクトキーを返せるよう、ビ�
 
 | URL | R2 object key | 用途 |
 | --- | --- | --- |
-| `/login` | `login` | ログイン、メールコード、MFA、パスキー認証 |
+| `/login` | `login` | メールアドレス入力 |
+| `/password` | `password` | パスワード入力・別の認証方法の選択 |
+| `/mail-code` | `mail-code` | メールコード入力 |
+| `/mfa` | `mfa` | パスワード後の2段階認証 |
 | `/security` | `security` | パスワード、メールコード、復旧コード、TOTP 管理 |
 | `/passkeys` | `passkeys` | パスキー登録、一覧、名前変更、削除 |
 | `/logout` | `logout` | 認証サービスのセッション失効 |

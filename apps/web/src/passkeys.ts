@@ -1,4 +1,5 @@
 import "./style.css";
+import "./theme";
 import { request, json } from "./api";
 import { configureTasklyLinks } from "./config";
 import { decodeBase64url, element, encodeBase64url } from "./dom";

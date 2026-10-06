@@ -1,4 +1,5 @@
 import "./style.css";
+import "./theme";
 import { request } from "./api";
 import { configureTasklyLinks, tasklyLoginURL } from "./config";
 import { element } from "./dom";

@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="ja" class="ch-token-v2">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>2段階認証 | Taskly 認証</title><script type="module" src="/src/login.ts"></script></head>
+  <body data-step="mfa"><main>
+    <header class="page-header"><span class="brand">Taskly</span><label class="theme-control">テーマ <select data-theme-select aria-label="テーマ"><option value="system">自動</option><option value="light">ライト</option><option value="dark">ダーク</option></select></label></header>
+    <p class="eyebrow">ログイン · 3 / 3</p><h1>2段階認証</h1><p>設定済みの方法で本人確認を行います。</p>
+    <p id="error" class="message error" role="alert"></p><a id="restart" href="/password" hidden>パスワード入力に戻る</a>
+    <form id="form"><label for="method">認証方法</label><select id="method"><option value="totp">認証アプリ</option><option value="code">メールコード</option><option value="recovery">復旧コード</option></select><label id="factor-label" for="factor">認証アプリのコード</label><input id="factor" autocomplete="one-time-code" inputmode="numeric" required autofocus /><button id="mfa-send-code" class="secondary-button" type="button" hidden>メールコードを送信</button><div class="actions"><button id="submit" type="submit">認証してログイン</button></div></form>
+    <p class="footer-note"><a href="/password">パスワード入力に戻る</a></p>
+  </main></body>
+</html>

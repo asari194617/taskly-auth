@@ -1,4 +1,5 @@
 import "./style.css";
+import "./theme";
 import { request, json } from "./api";
 import { element } from "./dom";
 
