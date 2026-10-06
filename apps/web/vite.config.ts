@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [{
     name: "extensionless-auth-pages",
     configureServer(server) {
-      const pages = new Set(["/login", "/logout", "/passkeys", "/security"]);
+      const pages = new Set(["/login", "/password", "/mail-code", "/mfa", "/logout", "/passkeys", "/security"]);
       server.middlewares.use((request, _response, next) => {
         if (request.url) {
           const url = new URL(request.url, "http://localhost");
@@ -20,6 +20,9 @@ export default defineConfig({
       input: {
         index: resolve(__dirname, "index.html"),
         login: resolve(__dirname, "login.html"),
+        password: resolve(__dirname, "password.html"),
+        mailCode: resolve(__dirname, "mail-code.html"),
+        mfa: resolve(__dirname, "mfa.html"),
         logout: resolve(__dirname, "logout.html"),
         passkeys: resolve(__dirname, "passkeys.html"),
         security: resolve(__dirname, "security.html"),

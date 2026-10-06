@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="ja" class="ch-token-v2">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>メールコード | Taskly 認証</title><script type="module" src="/src/login.ts"></script></head>
+  <body data-step="mail-code"><main>
+    <header class="page-header"><span class="brand">Taskly</span><label class="theme-control">テーマ <select data-theme-select aria-label="テーマ"><option value="system">自動</option><option value="light">ライト</option><option value="dark">ダーク</option></select></label></header>
+    <p class="eyebrow">ログイン · メールコード</p><h1>メールコードを入力</h1><p>送信した6桁のコードを入力してください。</p>
+    <p id="error" class="message error" role="alert"></p>
+    <form id="form"><label for="code">メールコード</label><input id="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" required autofocus /><div class="actions"><button id="submit" type="submit">ログイン</button></div></form>
+    <div class="alternative-actions"><button id="resend-code" class="secondary-button" type="button">コードを再送信</button><a href="/password">パスワード入力に戻る</a></div>
+  </main></body>
+</html>

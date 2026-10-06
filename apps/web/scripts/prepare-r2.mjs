@@ -5,7 +5,7 @@ import { listFiles } from "./deploy-plan.mjs";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const dist = resolve(scriptDirectory, "../dist");
-const pages = ["login", "logout", "passkeys", "security"];
+const pages = ["login", "password", "mail-code", "mfa", "logout", "passkeys", "security"];
 
 for (const page of pages) await copyFile(resolve(dist, `${page}.html`), resolve(dist, page));
 

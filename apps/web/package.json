@@ -17,5 +17,8 @@
     "@types/node": "^22.18.1",
     "typescript": "^5.9.2",
     "vite": "^7.1.5"
+  },
+  "dependencies": {
+    "@charcoal-ui/theme": "^6.2.0"
   }
 }
