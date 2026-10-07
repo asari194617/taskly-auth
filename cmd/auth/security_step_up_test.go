@@ -18,22 +18,27 @@ import (
 )
 
 type securityTestConnector struct {
-	verified        driver.Value
-	totpCount       int64
-	recoveryCount   int64
-	email           string
-	codeHash        string
-	codeExpires     time.Time
-	codeFailures    int64
-	hasCode         bool
-	userLockEntered chan struct{}
-	releaseUserLock chan struct{}
-	recoveryMutated bool
-	totpEncrypted   string
-	totpCodeUsed    bool
-	recoveryUsed    bool
-	totpCodeHash    string
-	recoveryHash    string
+	verified              driver.Value
+	totpCount             int64
+	recoveryCount         int64
+	recoveryTotal         int64
+	recoveryStatusQueries int
+	recoveryStatusQuery   string
+	recoveryStatusUserID  driver.Value
+	failRecoveryStatus    bool
+	email                 string
+	codeHash              string
+	codeExpires           time.Time
+	codeFailures          int64
+	hasCode               bool
+	userLockEntered       chan struct{}
+	releaseUserLock       chan struct{}
+	recoveryMutated       bool
+	totpEncrypted         string
+	totpCodeUsed          bool
+	recoveryUsed          bool
+	totpCodeHash          string
+	recoveryHash          string
 }
 
 func (c *securityTestConnector) Connect(context.Context) (driver.Conn, error) {
@@ -94,6 +99,9 @@ func (c *securityTestConn) ExecContext(_ context.Context, query string, args []d
 func (c *securityTestConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
 	switch {
 	case strings.Contains(query, "FROM auth_sessions s JOIN users"):
+		if args[0].Value != digest("test-session") && args[0].Value != digest("other-session") {
+			return &securityTestRows{columns: []string{"user_id"}}, nil
+		}
 		return &securityTestRows{columns: []string{"user_id"}, values: [][]driver.Value{{int64(7)}}}, nil
 	case strings.Contains(query, "SELECT attempts FROM auth_rate_limits"):
 		return &securityTestRows{columns: []string{"attempts"}, values: [][]driver.Value{{int64(1)}}}, nil
@@ -124,6 +132,14 @@ func (c *securityTestConn) QueryContext(_ context.Context, query string, args []
 		return &securityTestRows{columns: []string{"security_verified_at"}, values: [][]driver.Value{{c.config.verified}}}, nil
 	case strings.Contains(query, "SELECT COUNT(*) FROM totp_secrets"):
 		return &securityTestRows{columns: []string{"count"}, values: [][]driver.Value{{c.config.totpCount}}}, nil
+	case strings.Contains(query, "SELECT COUNT(*),COUNT(CASE WHEN is_used=0 THEN 1 END) FROM recovery_codes"):
+		c.config.recoveryStatusQueries++
+		c.config.recoveryStatusQuery = query
+		c.config.recoveryStatusUserID = args[0].Value
+		if c.config.failRecoveryStatus {
+			return nil, errors.New("recovery status unavailable")
+		}
+		return &securityTestRows{columns: []string{"total", "remaining"}, values: [][]driver.Value{{c.config.recoveryTotal, c.config.recoveryCount}}}, nil
 	case strings.Contains(query, "SELECT COUNT(*) FROM recovery_codes"):
 		return &securityTestRows{columns: []string{"count"}, values: [][]driver.Value{{c.config.recoveryCount}}}, nil
 	default:

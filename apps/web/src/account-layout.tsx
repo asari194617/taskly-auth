@@ -1,14 +1,15 @@
 import { CharcoalProvider, SegmentedControl } from "@charcoal-ui/react";
 import { useEffect, useRef, type ReactNode } from "react";
+import { AuthFooter } from "./auth-footer";
 import { AuthHeader } from "./auth-header";
-import { tasklyLoginURL } from "./config";
+import { tr } from "./i18n";
 
 type AccountPage = "profile" | "security" | "login-history";
 
-const pages: { id: AccountPage; href: string; label: string }[] = [
-  { id: "profile", href: "/profile", label: "アカウント" },
-  { id: "security", href: "/security", label: "認証設定" },
-  { id: "login-history", href: "/login-history", label: "ログイン履歴" },
+const pages: { id: AccountPage; href: string; labelJa: string; labelEn: string }[] = [
+  { id: "profile", href: "/profile", labelJa: "アカウント", labelEn: "Account" },
+  { id: "security", href: "/security", labelJa: "認証設定", labelEn: "Authentication" },
+  { id: "login-history", href: "/login-history", labelJa: "ログイン履歴", labelEn: "Login history" },
 ];
 
 export function AccountLayout({ page, children }: { page: AccountPage; children: ReactNode }) {
@@ -36,7 +37,7 @@ export function AccountLayout({ page, children }: { page: AccountPage; children:
     <div className="account-page">
       <AuthHeader />
       <div className="account-layout">
-        <nav className="account-menu" aria-label="アカウントメニュー">
+        <nav className="account-menu" aria-label={tr("アカウントメニュー", "Account menu")}>
           <div
             ref={segmentsRef}
             className="account-menu-segments"
@@ -44,18 +45,18 @@ export function AccountLayout({ page, children }: { page: AccountPage; children:
             onPointerDownCapture={() => { keyboardNavigation.current = false; }}
           >
             <SegmentedControl
-              name="アカウントのページ"
+              name={tr("アカウントのページ", "Account pages")}
               className="account-menu-control"
               value={page}
-              data={pages.map((item) => ({ value: item.id, label: item.label }))}
+              data={pages.map((item) => ({ value: item.id, label: tr(item.labelJa, item.labelEn) }))}
               fullWidth
               onChange={changePage}
             />
           </div>
-          <a className="account-menu-back" href={new URL(tasklyLoginURL).origin}>Taskly に戻る</a>
         </nav>
         <main className="account-content">{children}</main>
       </div>
+      <AuthFooter showReturnLink />
     </div>
   </CharcoalProvider>;
 }

@@ -1,5 +1,5 @@
 const preferenceKey = "taskly-auth-theme";
-type ThemePreference = "system" | "light" | "dark";
+export type ThemePreference = "system" | "light" | "dark";
 
 export function getThemePreference(): ThemePreference {
   try {
@@ -12,10 +12,8 @@ export function getThemePreference(): ThemePreference {
 
 function applyTheme(): void {
   const selected = getThemePreference();
-  const dark = selected === "dark" || (selected === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+  const dark = selected === "dark" || (selected === "system" && window.matchMedia?.("(prefers-color-scheme: dark)").matches);
   document.documentElement.dataset.theme = dark ? "dark" : "light";
-  document.documentElement.style.colorScheme = dark ? "dark" : "light";
-  document.querySelectorAll<HTMLSelectElement>("[data-theme-select]").forEach((select) => { select.value = selected; });
 }
 
 export function setThemePreference(value: ThemePreference): void {
@@ -24,9 +22,4 @@ export function setThemePreference(value: ThemePreference): void {
 }
 
 applyTheme();
-matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme);
-document.querySelectorAll<HTMLSelectElement>("[data-theme-select]").forEach((select) => {
-  select.addEventListener("change", () => {
-    setThemePreference(select.value as ThemePreference);
-  });
-});
+window.matchMedia?.("(prefers-color-scheme: dark)").addEventListener?.("change", applyTheme);

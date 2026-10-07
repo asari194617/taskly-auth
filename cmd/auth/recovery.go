@@ -24,6 +24,23 @@ func newRecoveryCode() (string, error) {
 	return string(code), nil
 }
 
+func (a *app) recoveryStatus(w http.ResponseWriter, r *http.Request) {
+	if !a.requireUI(w, r) {
+		return
+	}
+	id, ok := a.sessionUser(r)
+	if !ok {
+		oauthError(w, http.StatusUnauthorized, "login_required")
+		return
+	}
+	var total, remaining int
+	if err := a.db.QueryRowContext(r.Context(), `SELECT COUNT(*),COUNT(CASE WHEN is_used=0 THEN 1 END) FROM recovery_codes WHERE user_id=?`, id).Scan(&total, &remaining); err != nil {
+		oauthError(w, http.StatusServiceUnavailable, "temporarily_unavailable")
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"issued": total > 0, "remaining": remaining})
+}
+
 func (a *app) generateRecoveryCodes(w http.ResponseWriter, r *http.Request) {
 	if !a.requireUI(w, r) {
 		return

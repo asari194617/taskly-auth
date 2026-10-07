@@ -2,11 +2,13 @@ import "./style.css";
 import "@charcoal-ui/react/dist/index.css";
 import { Button, CharcoalProvider, DropdownMenuItem, DropdownSelector, TextField } from "@charcoal-ui/react";
 import { createRoot } from "react-dom/client";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { AuthHeader } from "./auth-header";
+import { AuthFooter } from "./auth-footer";
 import { request, json } from "./api";
 import { apiBase } from "./config";
 import { decodeBase64url, encodeBase64url } from "./dom";
+import { LocaleRoot, tr } from "./i18n";
 import { BusyLabel } from "./loading";
 import { clearFlow, loadFlow, saveFlow, startFlow, type LoginFlow } from "./login-flow";
 
@@ -53,8 +55,8 @@ function LoginApp() {
         flow.challenge = "";
         saveFlow(flow, sessionStorage);
         setRestart(true);
-        setError("認証できませんでした。パスワードからやり直してください。");
-      } else setError("認証できませんでした。入力内容を確認してください。");
+        setError(tr("認証できませんでした。パスワードからやり直してください。", "Authentication failed. Please start again with your password."));
+      } else setError(tr("認証できませんでした。入力内容を確認してください。", "Authentication failed. Check your details and try again."));
       return;
     }
     afterLogin(flow);
@@ -73,7 +75,7 @@ function LoginApp() {
       } else if (step === "password") await signIn({ password });
       else if (step === "mail-code") await signIn({ code: factor });
       else await signIn({ [method === "recovery" ? "recovery_code" : method]: factor });
-    } catch { setError("通信に失敗しました。"); }
+    } catch { setError(tr("通信に失敗しました。", "The request failed. Please try again.")); }
     finally { setBusyAction(null); }
   }
 
@@ -84,15 +86,15 @@ function LoginApp() {
       const response = await request("/auth/request-code", { email: flow.email });
       if (!response.ok) throw new Error("request failed");
       if (destination) location.assign(destination);
-      else setNotice("メールコードを送信しました。");
-    } catch { setError("コードを送信できませんでした。"); }
+      else setNotice(tr("メールコードを送信しました。", "Email code sent."));
+    } catch { setError(tr("コードを送信できませんでした。", "Could not send the code.")); }
     finally { setBusyAction(null); }
   }
 
   async function passkeyLogin() {
     if (!flow || busy) return;
     setError("");
-    if (!navigator.credentials?.get) { setError("このブラウザはパスキーに対応していません。"); return; }
+    if (!navigator.credentials?.get) { setError(tr("このブラウザはパスキーに対応していません。", "This browser does not support passkeys.")); return; }
     setBusyAction("passkey");
     try {
       const beginResponse = await request("/auth/passkey/begin", { email: flow.email });
@@ -124,37 +126,39 @@ function LoginApp() {
       });
       if (!finishResponse.ok) throw new Error("finish failed");
       afterLogin(flow);
-    } catch { setError("パスキーで認証できませんでした。別の方法をお試しください。"); }
+    } catch { setError(tr("パスキーで認証できませんでした。別の方法をお試しください。", "Could not sign in with your passkey. Please try another method.")); }
     finally { setBusyAction(null); }
   }
 
-  const title = { email: "メールアドレスを入力", password: "パスワードを入力", "mail-code": "メールコードを入力", mfa: "2段階認証" }[step];
-  const progress = { email: "ログイン · 1 / 3", password: "ログイン · 2 / 3", "mail-code": "ログイン · メールコード", mfa: "ログイン · 3 / 3" }[step];
-  const methodName = { totp: "認証アプリ", code: "メールコード", recovery: "復旧コード" }[method];
-  const displayedError = invalid ? (step === "email" ? "Taskly からログインを開始してください。" : "ログインを最初からやり直してください。") : error;
+  const title = { email: tr("メールアドレスを入力", "Enter your email address"), password: tr("パスワードを入力", "Enter your password"), "mail-code": tr("メールコードを入力", "Enter your email code"), mfa: tr("2段階認証", "Two-factor authentication") }[step];
+  const progress = { email: tr("ログイン · 1 / 3", "Sign in · 1 / 3"), password: tr("ログイン · 2 / 3", "Sign in · 2 / 3"), "mail-code": tr("ログイン · メールコード", "Sign in · Email code"), mfa: tr("ログイン · 3 / 3", "Sign in · 3 / 3") }[step];
+  const methodName = { totp: tr("認証アプリ", "Authenticator app"), code: tr("メールコード", "Email code"), recovery: tr("復旧コード", "Recovery code") }[method];
+  const displayedError = invalid ? (step === "email" ? tr("Taskly からログインを開始してください。", "Start signing in from Taskly.") : tr("ログインを最初からやり直してください。", "Please start signing in again.")) : error;
+  useEffect(() => { document.title = `${title} | ${tr("Taskly 認証", "Taskly Authentication")}`; }, [title]);
   return <CharcoalProvider><main>
     <AuthHeader />
     <p className="eyebrow">{progress}</p><h1>{title}</h1>
-    {step === "email" && <p>Taskly のアカウントで続行します。</p>}
-    {step === "password" && <><p id="email-display" className="account-email">{flow?.email}</p><a className="back-link" href="/login">メールアドレスを変更</a></>}
-    {step === "mail-code" && <p>送信した6桁のコードを入力してください。</p>}
-    {step === "mfa" && <p>設定済みの方法で本人確認を行います。</p>}
+    {step === "email" && <p>{tr("Taskly のアカウントで続行します。", "Continue with your Taskly account.")}</p>}
+    {step === "password" && <><p id="email-display" className="account-email">{flow?.email}</p><a className="back-link" href="/login">{tr("メールアドレスを変更", "Change email address")}</a></>}
+    {step === "mail-code" && <p>{tr("送信した6桁のコードを入力してください。", "Enter the six-digit code we sent.")}</p>}
+    {step === "mfa" && <p>{tr("設定済みの方法で本人確認を行います。", "Verify your identity using a method you have set up.")}</p>}
     {displayedError && <p id="error" className="message error" role="alert">{displayedError}</p>}
     {notice && <p className="message" role="status">{notice}</p>}
-    {restart && <a id="restart" href="/password">パスワード入力に戻る</a>}
+    {restart && <a id="restart" href="/password">{tr("パスワード入力に戻る", "Return to password entry")}</a>}
     {!invalid && !restart && <form id="form" onSubmit={submit} aria-busy={busy}>
-      {step === "email" && <TextField id="email" type="email" label="メールアドレス" showLabel required autoComplete="username" value={email} onChange={setEmail} autoFocus />}
-      {step === "password" && <TextField id="password" type="password" label="パスワード" showLabel required autoComplete="current-password" value={password} onChange={setPassword} autoFocus />}
-      {step === "mail-code" && <TextField id="code" label="メールコード" showLabel required inputMode="numeric" pattern="[0-9]{6}" autoComplete="one-time-code" value={factor} onChange={setFactor} autoFocus />}
-      {step === "mfa" && <><DropdownSelector className="mfa-method-selector" label="認証方法" showLabel name="method" value={method} assistiveText={`選択中: ${methodName}`} onChange={(value) => { setMethod(value as typeof method); setFactor(""); }}><DropdownMenuItem value="totp">認証アプリ</DropdownMenuItem><DropdownMenuItem value="code">メールコード</DropdownMenuItem><DropdownMenuItem value="recovery">復旧コード</DropdownMenuItem></DropdownSelector>
-        <TextField id="factor" label={{ totp: "認証アプリのコード", code: "メールコード", recovery: "復旧コード" }[method]} showLabel required inputMode={method === "recovery" ? "text" : "numeric"} autoComplete={method === "recovery" ? "off" : "one-time-code"} value={factor} onChange={setFactor} autoFocus />
-        {method === "code" && <Button id="mfa-send-code" type="button" onClick={() => void sendCode()} disabled={busy}><BusyLabel busy={busyAction === "send-code"}>メールコードを送信</BusyLabel></Button>}</>}
-      <div className="actions"><Button id="submit" type="submit" variant="Primary" fullWidth disabled={busy}><BusyLabel busy={busyAction === "submit"}>{step === "email" ? "次へ" : step === "mfa" ? "認証してログイン" : "ログイン"}</BusyLabel></Button></div>
+      {step === "email" && <TextField id="email" type="email" label={tr("メールアドレス", "Email address")} showLabel required autoComplete="username" value={email} onChange={setEmail} autoFocus />}
+      {step === "password" && <TextField id="password" type="password" label={tr("パスワード", "Password")} showLabel required autoComplete="current-password" value={password} onChange={setPassword} autoFocus />}
+      {step === "mail-code" && <TextField id="code" label={tr("メールコード", "Email code")} showLabel required inputMode="numeric" pattern="[0-9]{6}" autoComplete="one-time-code" value={factor} onChange={setFactor} autoFocus />}
+      {step === "mfa" && <><DropdownSelector className="mfa-method-selector" label={tr("認証方法", "Authentication method")} showLabel name="method" value={method} assistiveText={tr(`選択中: ${methodName}`, `Selected: ${methodName}`)} onChange={(value) => { setMethod(value as typeof method); setFactor(""); }}><DropdownMenuItem value="totp">{tr("認証アプリ", "Authenticator app")}</DropdownMenuItem><DropdownMenuItem value="code">{tr("メールコード", "Email code")}</DropdownMenuItem><DropdownMenuItem value="recovery">{tr("復旧コード", "Recovery code")}</DropdownMenuItem></DropdownSelector>
+        <TextField id="factor" label={{ totp: tr("認証アプリのコード", "Authenticator code"), code: tr("メールコード", "Email code"), recovery: tr("復旧コード", "Recovery code") }[method]} showLabel required inputMode={method === "recovery" ? "text" : "numeric"} autoComplete={method === "recovery" ? "off" : "one-time-code"} value={factor} onChange={setFactor} autoFocus />
+        {method === "code" && <Button id="mfa-send-code" type="button" onClick={() => void sendCode()} disabled={busy}><BusyLabel busy={busyAction === "send-code"}>{tr("メールコードを送信", "Send email code")}</BusyLabel></Button>}</>}
+      <div className="actions"><Button id="submit" type="submit" variant="Primary" fullWidth disabled={busy}><BusyLabel busy={busyAction === "submit"}>{step === "email" ? tr("次へ", "Next") : step === "mfa" ? tr("認証してログイン", "Verify and sign in") : tr("ログイン", "Sign in")}</BusyLabel></Button></div>
     </form>}
-    {!invalid && step === "password" && <div className="alternative-actions"><p>別の方法でログイン</p><Button id="send-code" type="button" fullWidth onClick={() => void sendCode("/mail-code")} disabled={busy}><BusyLabel busy={busyAction === "send-code"}>メールコードを送信</BusyLabel></Button><Button id="passkey" type="button" fullWidth onClick={() => void passkeyLogin()} disabled={busy}><BusyLabel busy={busyAction === "passkey"}>パスキーを使う</BusyLabel></Button></div>}
-    {!invalid && step === "mail-code" && <div className="alternative-actions"><Button id="resend-code" type="button" fullWidth onClick={() => void sendCode()} disabled={busy}><BusyLabel busy={busyAction === "send-code"}>コードを再送信</BusyLabel></Button><a href="/password">パスワード入力に戻る</a></div>}
-    {!invalid && step === "mfa" && <p className="footer-note"><a href="/password">パスワード入力に戻る</a></p>}
+    {!invalid && step === "password" && <div className="alternative-actions"><p>{tr("別の方法でログイン", "Sign in another way")}</p><Button id="send-code" type="button" fullWidth onClick={() => void sendCode("/mail-code")} disabled={busy}><BusyLabel busy={busyAction === "send-code"}>{tr("メールコードを送信", "Send email code")}</BusyLabel></Button><Button id="passkey" type="button" fullWidth onClick={() => void passkeyLogin()} disabled={busy}><BusyLabel busy={busyAction === "passkey"}>{tr("パスキーを使う", "Use a passkey")}</BusyLabel></Button></div>}
+    {!invalid && step === "mail-code" && <div className="alternative-actions"><Button id="resend-code" type="button" fullWidth onClick={() => void sendCode()} disabled={busy}><BusyLabel busy={busyAction === "send-code"}>{tr("コードを再送信", "Resend code")}</BusyLabel></Button><a href="/password">{tr("パスワード入力に戻る", "Return to password entry")}</a></div>}
+    {!invalid && step === "mfa" && <p className="footer-note"><a href="/password">{tr("パスワード入力に戻る", "Return to password entry")}</a></p>}
+    <AuthFooter />
   </main></CharcoalProvider>;
 }
 
-createRoot(document.getElementById("app")!).render(<LoginApp />);
+createRoot(document.getElementById("app")!).render(<LocaleRoot component={LoginApp} />);

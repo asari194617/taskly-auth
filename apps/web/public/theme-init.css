@@ -1,0 +1,9 @@
+html[data-theme="light"] {
+  background: var(--charcoal-color-background-secondary, #f3f3f3);
+  color-scheme: light;
+}
+
+html[data-theme="dark"] {
+  background: var(--charcoal-color-background-secondary, #151515);
+  color-scheme: dark;
+}

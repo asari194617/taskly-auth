@@ -141,6 +141,7 @@ assert passkey_begin.status == 401, passkey_begin.read()
 assert ui_json_request("/auth/passkeys").status == 401
 assert ui_json_request("/auth/passkey/register/begin", {}).status == 401
 assert ui_json_request("/auth/email-code/settings").status == 401
+assert ui_json_request("/auth/recovery/status").status == 401
 assert ui_json_request("/auth/recovery/generate", {}).status == 401
 assert ui_json_request("/auth/totp/status").status == 401
 assert ui_json_request("/auth/totp/setup", {}).status == 401
@@ -170,6 +171,7 @@ profile = json.load(response)
 assert profile["email"] == email
 security_status = json.load(ui_json_request("/auth/security/step-up/status"))
 assert security_status == {"required": False, "verified": False, "methods": ["email"]}, security_status
+assert json.load(ui_json_request("/auth/recovery/status")) == {"issued": False, "remaining": 0}
 response = ui_json_request("/auth/profile", {"display_name": profile["display_name"]})
 assert response.status == 204, response.read()
 
@@ -327,10 +329,12 @@ assert response.status == 200, response.read()
 first_codes = json.load(response)["codes"]
 assert len(first_codes) == 10 and len(set(first_codes)) == 10
 assert all(len(code) == 19 and code[4] == code[9] == code[14] == "-" for code in first_codes)
+assert json.load(ui_json_request("/auth/recovery/status")) == {"issued": True, "remaining": 10}
 response = ui_json_request("/auth/recovery/generate", {})
 assert response.status == 200, response.read()
 second_codes = json.load(response)["codes"]
 assert len(second_codes) == 10 and set(first_codes).isdisjoint(second_codes)
+assert json.load(ui_json_request("/auth/recovery/status")) == {"issued": True, "remaining": 10}
 response = ui_json_request("/auth/login", {"email": email, "password": password})
 assert response.status == 202, response.read()
 old_challenge = json.load(response)["auth_challenge"]
@@ -342,6 +346,7 @@ new_challenge = json.load(response)["auth_challenge"]
 response = ui_json_request("/auth/login", {"email": email, "auth_challenge": new_challenge,
                                            "recovery_code": second_codes[0]})
 assert response.status == 200, response.read()
+assert json.load(ui_json_request("/auth/recovery/status")) == {"issued": True, "remaining": 9}
 
 response = ui_json_request("/auth/totp/status")
 assert response.status == 200, response.read()
