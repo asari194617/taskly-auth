@@ -4,7 +4,7 @@ import { Button, CharcoalProvider, TextField } from "@charcoal-ui/react";
 import { createRoot } from "react-dom/client";
 import { useEffect, useState, type FormEvent } from "react";
 import { json, request } from "./api";
-import { getThemePreference, setThemePreference } from "./theme";
+import { AuthHeader } from "./auth-header";
 
 interface PasswordStatus { has_password: boolean }
 interface EmailSettings { enabled: boolean }
@@ -14,7 +14,6 @@ interface RecoveryCodes { codes: string[] }
 interface ErrorPayload { error?: string }
 
 function SecurityApp() {
-  const [theme, setTheme] = useState(getThemePreference());
   const [passwordStatus, setPasswordStatus] = useState<PasswordStatus | null>(null);
   const [emailSettings, setEmailSettings] = useState<EmailSettings | null>(null);
   const [totpStatus, setTotpStatus] = useState<TotpStatus | null>(null);
@@ -95,7 +94,7 @@ function SecurityApp() {
   }
 
   return <CharcoalProvider><main className="wide">
-    <header className="page-header"><span className="brand">Taskly</span><label className="theme-control">テーマ <select data-theme-select aria-label="テーマ" value={theme} onChange={(event) => { const next = event.target.value as typeof theme; setThemePreference(next); setTheme(next); }}><option value="system">自動</option><option value="light">ライト</option><option value="dark">ダーク</option></select></label></header>
+    <AuthHeader />
     <h1>認証設定</h1><p className="message error" role="alert">{error}</p><p className="message" role="status">{notice}</p>
     {emailSettings && <section><h2>メールコード</h2><p>無効にするにはパスワードかパスキーが必要です。</p><form onSubmit={updateEmail}><label className="checkbox"><input type="checkbox" checked={emailSettings.enabled} onChange={(event) => setEmailSettings({ enabled: event.target.checked })} /> メールコードを使う</label><Button type="submit" variant="Primary" disabled={busy}>設定を保存</Button></form></section>}
     <section><h2>復旧コード</h2><p>再発行すると以前の未使用コードは使えなくなります。表示されるコードを安全な場所に保存してください。</p><Button type="button" onClick={generateRecoveryCodes} disabled={busy}>復旧コードを再発行</Button>{recoveryCodes.length > 0 && <pre>{recoveryCodes.join("\n")}</pre>}</section>

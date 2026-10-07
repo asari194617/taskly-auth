@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { request, json } from "./api";
 import { tasklyLoginURL } from "./config";
 import { decodeBase64url, encodeBase64url } from "./dom";
-import { getThemePreference, setThemePreference } from "./theme";
+import { AuthHeader } from "./auth-header";
 
 interface PasskeySummary { id: number; device_name: string; created_at: string }
 interface PasskeyListPayload { passkeys: PasskeySummary[] }
@@ -21,7 +21,6 @@ async function authenticatedRequest<T>(path: string, body?: unknown): Promise<T>
 }
 
 function PasskeysApp() {
-  const [theme, setTheme] = useState(getThemePreference());
   const [keys, setKeys] = useState<PasskeySummary[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -82,7 +81,7 @@ function PasskeysApp() {
   }
 
   return <CharcoalProvider><main className="wide">
-    <header className="page-header"><span className="brand">Taskly</span><label className="theme-control">テーマ <select data-theme-select aria-label="テーマ" value={theme} onChange={(event) => { const next = event.target.value as typeof theme; setThemePreference(next); setTheme(next); }}><option value="system">自動</option><option value="light">ライト</option><option value="dark">ダーク</option></select></label></header>
+    <AuthHeader />
     <h1>パスキーを管理</h1><p className="message error" role="alert">{error}</p><p className="message" role="status">{notice}</p>
     <ul className="key-list">{keys.length ? keys.map((key) => <li key={key.id}><span>{key.device_name} ({key.created_at})</span><div className="actions"><Button type="button" disabled={busy} onClick={() => void rename(key)}>名前を変更</Button><Button type="button" disabled={busy} onClick={() => void remove(key)}>削除</Button></div></li>) : <li>登録済みのパスキーはありません。</li>}</ul>
     <Button type="button" variant="Primary" disabled={busy} onClick={() => void register()}>パスキーを登録</Button>
