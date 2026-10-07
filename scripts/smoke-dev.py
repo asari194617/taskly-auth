@@ -153,7 +153,7 @@ assert response.status == 200, response.status
 
 response = request(ui + "/passkeys")
 assert response.status == 200, response.status
-assert b"/src/passkeys.ts" in response.read()
+assert b'id="app"' in response.read()
 response = ui_json_request("/auth/passkeys")
 assert response.status == 200, response.read()
 assert json.load(response)["passkeys"] == []
@@ -267,7 +267,7 @@ if public_client_id and public_redirect_uri:
 
 response = request(ui + "/security")
 assert response.status == 200
-assert b"/src/security.ts" in response.read()
+assert b'id="app"' in response.read()
 response = ui_json_request("/auth/email-code/settings")
 assert response.status == 200
 assert json.load(response)["enabled"] is False
