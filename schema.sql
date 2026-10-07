@@ -153,6 +153,12 @@ CREATE TABLE IF NOT EXISTS auth_login_history (
   user_id BIGINT UNSIGNED NOT NULL,
   method VARCHAR(32) NOT NULL,
   logged_in_at DATETIME NOT NULL,
+  ip_address VARCHAR(45),
+  geo_city VARCHAR(128),
+  geo_region VARCHAR(128),
+  geo_country CHAR(2),
+  user_agent VARCHAR(1024),
+  ip_source VARCHAR(32),
   INDEX idx_auth_login_history_user_recent (user_id, logged_in_at, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

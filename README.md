@@ -19,6 +19,7 @@ Taskly 用の独立した認証 UI、認証 API、OAuth 2.1 authorization server
 認証設定を変更する際の追加確認は `AUTH_SECURITY_STEP_UP_REQUIRED=1` で有効にします。既定値は `0` で、認証 API と UI を両方更新してから本番ホストの Compose 用 `.env` で `1` に切り替えます。認証アプリが有効なら認証アプリのコードか未使用の復旧コードを使い、未設定なら登録メールに専用コードを送ります。成功後の確認は同じ認証セッションで5分間有効です。表示名とメールアドレスの確認は対象外です。API とエラー応答は [docs/security-step-up.md](docs/security-step-up.md) を参照してください。
 
 本番 UI の構成、R2 の初期設定、Actions の secret とデプロイ手順は [docs/static-ui-r2.md](docs/static-ui-r2.md) を参照してください。Go の本番イメージは API だけを公開します。
+ログイン履歴の IP・位置・端末情報の記録、CSV エクスポート、Cloudflare と Nginx の信頼境界は [docs/login-history.md](docs/login-history.md) を参照してください。
 
 public client は `OAUTH_PUBLIC_CLIENTS_JSON` に `[{"client_id":"taskly-dev","redirect_uri":"http://127.0.0.1/callback"}]` のように登録します。Authorization Code + PKCE S256 を必須とし、token endpoint には `client_id` を送って client secret は送りません。HTTPS の app-claimed URI、逆ドメイン形式の private-use scheme、loopback IP の HTTP URIを受け付けます。loopback IP では登録値と同じホスト・パス・クエリで任意の有効なポートを使えます。本番用の client ID と redirect URI は実際のアプリが確定してから登録してください。リポジトリ内に native アプリ実装はありません。[RFC 8252](https://www.rfc-editor.org/rfc/rfc8252) の redirect URI と PKCE の要件に従います。
 

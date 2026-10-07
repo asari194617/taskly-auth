@@ -5,7 +5,7 @@ import ts from "typescript";
 
 const source = await readFile(new URL("../src/login-flow.ts", import.meta.url), "utf8");
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText;
-const { startFlow, loadFlow, saveFlow, clearFlow } = await import(`data:text/javascript,${encodeURIComponent(compiled)}`);
+const { startFlow, loadFlow, saveFlow, clearFlow, securityDetailSection, securityDetailURL, securityLoginURL, securityMfaURL } = await import(`data:text/javascript,${encodeURIComponent(compiled)}`);
 const storage = () => {
   const values = new Map();
   return { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: (key) => values.delete(key) };
@@ -32,4 +32,19 @@ test("invalid OAuth request and unknown management target are rejected", () => {
   assert.equal(startFlow("?next=https://example.com", tab), null);
   assert.equal(startFlow("?next=security", tab).next, "security");
   assert.equal(startFlow("?next=login-history", tab).next, "login-history");
+});
+
+test("security verification returns only to allowlisted settings sections", () => {
+  const tab = storage();
+  const flow = startFlow("?next=security&section=passkeys", tab);
+  assert.equal(flow.nextSection, "passkeys");
+  assert.equal(loadFlow(tab).nextSection, "passkeys");
+  assert.equal(securityMfaURL("passkeys"), "/mfa?purpose=security&section=passkeys");
+  assert.equal(securityDetailURL(flow.nextSection), "/security?section=passkeys");
+  assert.equal(securityLoginURL(flow.nextSection), "/login?next=security&section=passkeys");
+  assert.equal(securityDetailSection("https://example.com"), null);
+  assert.equal(startFlow("?next=security&section=https%3A%2F%2Fexample.com", tab).nextSection, "");
+  const invalid = { ...flow, nextSection: "https://example.com" };
+  saveFlow(invalid, tab);
+  assert.equal(loadFlow(tab), null);
 });

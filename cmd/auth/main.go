@@ -27,6 +27,7 @@ type app struct {
 	webAuthn               *webauthn.WebAuthn
 	internalToken          string
 	securityStepUpRequired bool
+	historyProxyToken      string
 }
 
 func env(key, fallback string) string {
@@ -77,6 +78,7 @@ func main() {
 		alerts:                 alerts,
 		internalToken:          os.Getenv("AUTH_INTERNAL_TOKEN"),
 		securityStepUpRequired: stepUpSetting == "1",
+		historyProxyToken:      os.Getenv("AUTH_HISTORY_PROXY_TOKEN"),
 	}
 	a.publicClients, err = parsePublicClients(os.Getenv("OAUTH_PUBLIC_CLIENTS_JSON"), a.clientID)
 	if err != nil {
@@ -108,6 +110,10 @@ func main() {
 		alerts.sendSync("Taskly auth startup failed: internal API configuration invalid")
 		log.Fatal("AUTH_INTERNAL_TOKEN must contain at least 32 characters when migration is ready")
 	}
+	if env("NODE_ENV", "development") == "production" && len(a.historyProxyToken) < 32 {
+		alerts.sendSync("Taskly auth startup failed: login history proxy configuration invalid")
+		log.Fatal("AUTH_HISTORY_PROXY_TOKEN must contain at least 32 characters in production")
+	}
 	if err := a.ensureOAuthSchema(context.Background()); err != nil {
 		alerts.sendSync("Taskly auth startup failed: database schema unavailable")
 		log.Fatal("OAuth schema: ", err)
@@ -124,6 +130,7 @@ func main() {
 	api.HandleFunc("POST /auth/logout", a.logout)
 	api.HandleFunc("GET /auth/profile", a.profile)
 	api.HandleFunc("GET /auth/login-history", a.loginHistory)
+	api.HandleFunc("GET /auth/login-history/export", a.exportLoginHistory)
 	api.HandleFunc("POST /auth/profile", a.updateProfile)
 	api.HandleFunc("POST /auth/profile/email-verification/request", a.requestEmailVerification)
 	api.HandleFunc("POST /auth/profile/email-verification/confirm", a.confirmEmailVerification)
