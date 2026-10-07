@@ -106,6 +106,7 @@ function LoginHistoryApp() {
   return <AccountLayout page="login-history">
     <h1>{tr("ログイン履歴", "Login history")}</h1>
     <p className="account-intro">{tr("最新50件を表示します。場所はIPアドレスからの推定です。", "Shows the 50 most recent sign-ins. Locations are estimated from IP addresses.")}</p>
+    <p className="login-history-attribution">{tr("位置情報データ: ", "IP geolocation by ")}<a href="https://db-ip.com" target="_blank" rel="noopener noreferrer">DB-IP</a></p>
     <div className="login-history-toolbar">
       <p>{tr("CSVには保存されている全履歴を含みます。古い記録には場所やデバイス情報がない場合があります。", "The CSV includes all retained sign-ins. Older records may lack location or device details.")}</p>
       <Button type="button" disabled={exporting} onClick={() => void exportCSV()}><BusyLabel busy={exporting}>{tr("CSVをダウンロード", "Download CSV")}</BusyLabel></Button>

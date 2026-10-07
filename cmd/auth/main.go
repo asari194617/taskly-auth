@@ -28,8 +28,8 @@ type app struct {
 	webAuthn                *webauthn.WebAuthn
 	internalToken           string
 	securityStepUpRequired  bool
-	historyProxyToken       string
 	historyTrustedProxyPeer netip.Addr
+	geoDB                   *cityGeoDB
 }
 
 func env(key, fallback string) string {
@@ -68,6 +68,12 @@ func main() {
 		alerts.sendSync("Taskly auth startup failed: login history proxy peer invalid")
 		log.Fatal(err)
 	}
+	geoDB, err := openCityGeoDB(os.Getenv("AUTH_GEOIP_MMDB_PATH"))
+	if err != nil {
+		alerts.sendSync("Taskly auth startup failed: IP geolocation database invalid")
+		log.Fatal("IP geolocation database invalid: ", err)
+	}
+	defer geoDB.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	err = db.PingContext(ctx)
 	cancel()
@@ -85,8 +91,8 @@ func main() {
 		alerts:                  alerts,
 		internalToken:           os.Getenv("AUTH_INTERNAL_TOKEN"),
 		securityStepUpRequired:  stepUpSetting == "1",
-		historyProxyToken:       os.Getenv("AUTH_HISTORY_PROXY_TOKEN"),
 		historyTrustedProxyPeer: historyTrustedProxyPeer,
+		geoDB:                   geoDB,
 	}
 	a.publicClients, err = parsePublicClients(os.Getenv("OAUTH_PUBLIC_CLIENTS_JSON"), a.clientID)
 	if err != nil {
@@ -118,9 +124,9 @@ func main() {
 		alerts.sendSync("Taskly auth startup failed: internal API configuration invalid")
 		log.Fatal("AUTH_INTERNAL_TOKEN must contain at least 32 characters when migration is ready")
 	}
-	if env("NODE_ENV", "development") == "production" && a.ready && len(a.historyProxyToken) < 32 && !a.historyTrustedProxyPeer.IsValid() {
+	if env("NODE_ENV", "development") == "production" && a.ready && !a.historyTrustedProxyPeer.IsValid() {
 		alerts.sendSync("Taskly auth startup failed: login history proxy configuration invalid")
-		log.Fatal("AUTH_HISTORY_PROXY_TOKEN or AUTH_HISTORY_TRUSTED_PROXY_PEER is required when production auth is ready")
+		log.Fatal("AUTH_HISTORY_TRUSTED_PROXY_PEER is required when production auth is ready")
 	}
 	if err := a.ensureOAuthSchema(context.Background()); err != nil {
 		alerts.sendSync("Taskly auth startup failed: database schema unavailable")

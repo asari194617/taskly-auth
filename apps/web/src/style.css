@@ -76,6 +76,9 @@ pre { overflow: auto; padding: 14px; background: var(--charcoal-color-background
 .account-menu-control { min-width: 260px; }
 .account-menu .charcoal-segmented-control-radio__label:has(input:focus-visible) { outline: 3px solid var(--charcoal-color-border-focus-1); outline-offset: 2px; }
 .account-intro { margin: 8px 0 0; color: var(--charcoal-color-text-secondary-default); font-size: 14px; }
+.login-history-attribution { margin: 4px 0 0; color: var(--charcoal-color-text-secondary-default); font-size: 11px; }
+.login-history-attribution a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.login-history-attribution a:hover { color: var(--charcoal-color-text-default); }
 .login-history-list { margin: 24px 0 0; padding: 0; border: 1px solid var(--charcoal-color-border-secondary); border-radius: 12px; list-style: none; overflow: hidden; }
 .login-history-item { padding: 16px 20px; }
 .login-history-item + .login-history-item { border-top: 1px solid var(--charcoal-color-border-secondary); }

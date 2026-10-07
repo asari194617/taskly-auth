@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/subtle"
 	"encoding/csv"
 	"errors"
 	"log"
@@ -23,13 +22,16 @@ type loginLocation struct {
 }
 
 type loginHistoryEntry struct {
-	ID         uint64         `json:"-"`
-	Method     string         `json:"method"`
-	LoggedInAt time.Time      `json:"logged_in_at"`
-	IPAddress  *string        `json:"ip_address"`
-	Location   *loginLocation `json:"location"`
-	Device     *string        `json:"device"`
-	IPSource   *string        `json:"-"`
+	ID          uint64         `json:"-"`
+	Method      string         `json:"method"`
+	LoggedInAt  time.Time      `json:"logged_in_at"`
+	IPAddress   *string        `json:"ip_address"`
+	Location    *loginLocation `json:"location"`
+	Device      *string        `json:"device"`
+	IPSource    *string        `json:"-"`
+	GeoSource   *string        `json:"-"`
+	GeoRelease  *string        `json:"-"`
+	GeoDBSHA256 *string        `json:"-"`
 }
 
 // Kept from Cloudflare's published IPv4 and IPv6 lists. Refresh these ranges
@@ -47,6 +49,12 @@ var cloudflareRanges = []netip.Prefix{
 	netip.MustParsePrefix("2606:4700::/32"), netip.MustParsePrefix("2803:f800::/32"),
 	netip.MustParsePrefix("2405:b500::/32"), netip.MustParsePrefix("2405:8100::/32"),
 	netip.MustParsePrefix("2a06:98c0::/29"), netip.MustParsePrefix("2c0f:f248::/32"),
+}
+
+var cloudflarePseudoIPv4Range = netip.MustParsePrefix("240.0.0.0/4")
+
+func isCloudflarePseudoIPv4(ip netip.Addr) bool {
+	return cloudflarePseudoIPv4Range.Contains(ip.Unmap())
 }
 
 func isCloudflareAddress(ip netip.Addr) bool {
@@ -69,29 +77,17 @@ func parseHistoryTrustedProxyPeer(value string) (netip.Addr, error) {
 	return ip.Unmap(), nil
 }
 
-// A token-authenticated proxy may supply location. Without that token, the
-// existing Nginx vhost is trusted only when its exact Docker gateway is the
-// socket peer; Nginx overwrites X-Real-IP, and location is always unknown.
-func loginRequestEvidence(r *http.Request, proxyToken string, trustedPeer netip.Addr) (*string, *loginLocation, *string, *string) {
+// The existing Nginx vhost is trusted only when its exact Docker gateway is
+// the socket peer; Nginx overwrites X-Real-IP. Location is resolved locally
+// from the validated visitor IP, never from HTTP location headers.
+func loginRequestEvidence(r *http.Request, trustedPeer netip.Addr) (*string, *string, *string) {
 	var ip, source *string
 	peer := r.RemoteAddr
 	if host, _, err := net.SplitHostPort(peer); err == nil {
 		peer = host
 	}
 	peerIP, peerErr := netip.ParseAddr(peer)
-	proxyPeer := peerErr == nil && (peerIP.IsLoopback() || peerIP.IsPrivate()) &&
-		len(proxyToken) >= 32 && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Auth-Proxy-Token")), []byte(proxyToken)) == 1
-	var tokenEvidenceUsed bool
-	if parsed, err := netip.ParseAddr(strings.TrimSpace(r.Header.Get("X-Auth-Client-IP"))); proxyPeer && err == nil && parsed.IsGlobalUnicast() && !parsed.IsPrivate() {
-		tokenEvidenceUsed = true
-		ipValue := parsed.Unmap().String()
-		ip = &ipValue
-		sourceValue := strings.TrimSpace(r.Header.Get("X-Auth-IP-Source"))
-		if sourceValue != "cloudflare" && sourceValue != "origin_socket" {
-			sourceValue = "reverse_proxy_unspecified"
-		}
-		source = &sourceValue
-	} else if peerErr == nil && trustedPeer.IsValid() && peerIP.Unmap() == trustedPeer {
+	if peerErr == nil && trustedPeer.IsValid() && peerIP.Unmap() == trustedPeer {
 		// The current Nginx vhost sets X-Real-IP to its socket peer, so a
 		// direct-origin request cannot substitute a value here. Do not read
 		// CF-Connecting-IP unless that peer is a published Cloudflare edge.
@@ -99,7 +95,7 @@ func loginRequestEvidence(r *http.Request, proxyToken string, trustedPeer netip.
 		if err == nil && realIP.IsValid() && realIP.Zone() == "" && !realIP.IsUnspecified() && !realIP.IsMulticast() {
 			if isCloudflareAddress(realIP) {
 				visitorIP, err := netip.ParseAddr(strings.TrimSpace(r.Header.Get("CF-Connecting-IP")))
-				if err == nil && visitorIP.IsGlobalUnicast() && !visitorIP.IsPrivate() && visitorIP.Zone() == "" {
+				if err == nil && visitorIP.IsGlobalUnicast() && !visitorIP.IsPrivate() && visitorIP.Zone() == "" && !isCloudflarePseudoIPv4(visitorIP) {
 					ipValue := visitorIP.Unmap().String()
 					ip = &ipValue
 					sourceValue := "cloudflare"
@@ -120,23 +116,11 @@ func loginRequestEvidence(r *http.Request, proxyToken string, trustedPeer netip.
 			source = &sourceValue
 		}
 	}
-	var location *loginLocation
-	if tokenEvidenceUsed && ip != nil && source != nil && *source == "cloudflare" {
-		city := cleanHistoryText(r.Header.Get("X-Auth-Geo-City"), 128)
-		region := cleanHistoryText(r.Header.Get("X-Auth-Geo-Region"), 128)
-		country := strings.ToUpper(cleanHistoryText(r.Header.Get("X-Auth-Geo-Country"), 2))
-		if country == "XX" || len(country) != 2 || country[0] < 'A' || country[0] > 'Z' || country[1] < 'A' || country[1] > 'Z' {
-			country = ""
-		}
-		if city != "" || region != "" || country != "" {
-			location = &loginLocation{City: city, Region: region, Country: country}
-		}
-	}
 	var device *string
 	if value := cleanHistoryText(r.UserAgent(), 1024); value != "" {
 		device = &value
 	}
-	return ip, location, device, source
+	return ip, device, source
 }
 
 func cleanHistoryText(value string, maxRunes int) string {
@@ -172,7 +156,7 @@ func (a *app) loginHistory(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := a.db.QueryContext(r.Context(), `SELECT id,method,logged_in_at,ip_address,geo_city,geo_region,geo_country,user_agent,ip_source FROM auth_login_history WHERE user_id=? ORDER BY logged_in_at DESC,id DESC LIMIT ?`, userID, loginHistoryPageSize)
+	rows, err := a.db.QueryContext(r.Context(), `SELECT id,method,logged_in_at,ip_address,geo_city,geo_region,geo_country,user_agent,ip_source,geo_source,geo_db_release,geo_db_sha256 FROM auth_login_history WHERE user_id=? ORDER BY logged_in_at DESC,id DESC LIMIT ?`, userID, loginHistoryPageSize)
 	if err != nil {
 		oauthError(w, http.StatusServiceUnavailable, "history_unavailable")
 		return
@@ -200,12 +184,13 @@ type historyScanner interface {
 
 func scanLoginHistory(row historyScanner) (loginHistoryEntry, error) {
 	var entry loginHistoryEntry
-	var ip, city, region, country, device, source *string
-	err := row.Scan(&entry.ID, &entry.Method, &entry.LoggedInAt, &ip, &city, &region, &country, &device, &source)
+	var ip, city, region, country, device, source, geoSource, geoRelease, geoDBSHA256 *string
+	err := row.Scan(&entry.ID, &entry.Method, &entry.LoggedInAt, &ip, &city, &region, &country, &device, &source, &geoSource, &geoRelease, &geoDBSHA256)
 	if err != nil {
 		return entry, err
 	}
 	entry.IPAddress, entry.Device, entry.IPSource = ip, device, source
+	entry.GeoSource, entry.GeoRelease, entry.GeoDBSHA256 = geoSource, geoRelease, geoDBSHA256
 	if city != nil || region != nil || country != nil {
 		entry.Location = &loginLocation{City: stringValue(city), Region: stringValue(region), Country: stringValue(country)}
 	}
@@ -233,7 +218,7 @@ func (a *app) exportLoginHistory(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := a.db.QueryContext(r.Context(), `SELECT id,method,logged_in_at,ip_address,geo_city,geo_region,geo_country,user_agent,ip_source FROM auth_login_history WHERE user_id=? ORDER BY logged_in_at ASC,id ASC`, userID)
+	rows, err := a.db.QueryContext(r.Context(), `SELECT id,method,logged_in_at,ip_address,geo_city,geo_region,geo_country,user_agent,ip_source,geo_source,geo_db_release,geo_db_sha256 FROM auth_login_history WHERE user_id=? ORDER BY logged_in_at ASC,id ASC`, userID)
 	if err != nil {
 		oauthError(w, http.StatusServiceUnavailable, "history_unavailable")
 		return
@@ -247,7 +232,7 @@ func (a *app) exportLoginHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	csvWriter := csv.NewWriter(w)
-	if err := csvWriter.Write([]string{"account_user_id", "event_id", "logged_in_at_utc", "method", "ip_address", "ip_source", "city", "region", "country_code", "location_source", "device_user_agent"}); err != nil {
+	if err := csvWriter.Write([]string{"account_user_id", "event_id", "logged_in_at_utc", "method", "ip_address", "ip_source", "city", "region", "country_code", "location_source", "device_user_agent", "location_database_release", "location_database_sha256", "location_source_url"}); err != nil {
 		return
 	}
 	for rows.Next() {
@@ -257,16 +242,19 @@ func (a *app) exportLoginHistory(w http.ResponseWriter, r *http.Request) {
 			panic(http.ErrAbortHandler)
 		}
 		var city, region, country string
-		var locationSource string
 		if entry.Location != nil {
 			city, region, country = entry.Location.City, entry.Location.Region, entry.Location.Country
-			locationSource = "cloudflare_ip_geolocation"
+		}
+		var sourceURL string
+		if stringValue(entry.GeoSource) == geoIPSource {
+			sourceURL = geoIPURL
 		}
 		if err := csvWriter.Write([]string{
 			strconv.FormatUint(userID, 10), strconv.FormatUint(entry.ID, 10),
 			entry.LoggedInAt.UTC().Format(time.RFC3339Nano), csvSafe(entry.Method),
 			stringValue(entry.IPAddress), csvSafe(stringValue(entry.IPSource)),
-			csvSafe(city), csvSafe(region), csvSafe(country), locationSource, csvSafe(stringValue(entry.Device)),
+			csvSafe(city), csvSafe(region), csvSafe(country), csvSafe(stringValue(entry.GeoSource)), csvSafe(stringValue(entry.Device)),
+			csvSafe(stringValue(entry.GeoRelease)), csvSafe(stringValue(entry.GeoDBSHA256)), sourceURL,
 		}); err != nil {
 			return
 		}

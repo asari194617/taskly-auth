@@ -14,6 +14,8 @@ services:
       - taskly
     ports:
       - "127.0.0.1:3070:3067"
+    volumes:
+      - ./geoip:/geoip:ro
     restart: unless-stopped
     read_only: true
     security_opt:

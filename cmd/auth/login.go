@@ -269,10 +269,13 @@ func (a *app) finishLogin(w http.ResponseWriter, r *http.Request, id uint64, met
 	}
 	loggedInAt := time.Now().UTC()
 	expires := loggedInAt.Add(12 * time.Hour)
-	ip, location, device, ipSource := loginRequestEvidence(r, a.historyProxyToken, a.historyTrustedProxyPeer)
+	ip, device, ipSource := loginRequestEvidence(r, a.historyTrustedProxyPeer)
+	geo := a.resolveLoginLocation(ip, ipSource)
 	var city, region, country any
-	if location != nil {
-		city, region, country = nilIfEmpty(location.City), nilIfEmpty(location.Region), nilIfEmpty(location.Country)
+	var geoSource, geoRelease, geoDBSHA256 any
+	if geo != nil {
+		city, region, country = nilIfEmpty(geo.Location.City), nilIfEmpty(geo.Location.Region), nilIfEmpty(geo.Location.Country)
+		geoSource, geoRelease, geoDBSHA256 = geo.Source, geo.Release, geo.SHA256
 	}
 	tx, err := a.db.BeginTx(r.Context(), nil)
 	if err != nil {
@@ -293,7 +296,7 @@ func (a *app) finishLogin(w http.ResponseWriter, r *http.Request, id uint64, met
 		_, err = tx.ExecContext(r.Context(), `INSERT INTO auth_sessions (token_hash,user_id,expires_at,created_at) VALUES (?,?,?,?)`, digest(token), id, expires, loggedInAt)
 	}
 	if err == nil {
-		_, err = tx.ExecContext(r.Context(), `INSERT INTO auth_login_history (user_id,method,logged_in_at,ip_address,geo_city,geo_region,geo_country,user_agent,ip_source) VALUES (?,?,?,?,?,?,?,?,?)`, id, method, loggedInAt, ip, city, region, country, device, ipSource)
+		_, err = tx.ExecContext(r.Context(), `INSERT INTO auth_login_history (user_id,method,logged_in_at,ip_address,geo_city,geo_region,geo_country,user_agent,ip_source,geo_source,geo_db_release,geo_db_sha256) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, id, method, loggedInAt, ip, city, region, country, device, ipSource, geoSource, geoRelease, geoDBSHA256)
 	}
 	if err == nil {
 		err = tx.Commit()

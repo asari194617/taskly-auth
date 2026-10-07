@@ -117,6 +117,7 @@ func (c *historyTestConn) ExecContext(_ context.Context, query string, args []dr
 			ID: uint64(len(c.state.history) + 1), Method: args[1].Value.(string),
 			LoggedInAt: args[2].Value.(time.Time), IPAddress: ptrFromValue(args[3].Value),
 			Device: ptrFromValue(args[7].Value), IPSource: ptrFromValue(args[8].Value),
+			GeoSource: ptrFromValue(args[9].Value), GeoRelease: ptrFromValue(args[10].Value), GeoDBSHA256: ptrFromValue(args[11].Value),
 		}
 		city, region, country := ptrFromValue(args[4].Value), ptrFromValue(args[5].Value), ptrFromValue(args[6].Value)
 		if city != nil || region != nil || country != nil {
@@ -180,9 +181,10 @@ func (c *historyTestConn) QueryContext(_ context.Context, query string, args []d
 				city, region, country = entry.Location.City, entry.Location.Region, entry.Location.Country
 			}
 			values = append(values, []driver.Value{int64(entry.ID), entry.Method, entry.LoggedInAt,
-				valueFromPtr(entry.IPAddress), city, region, country, valueFromPtr(entry.Device), valueFromPtr(entry.IPSource)})
+				valueFromPtr(entry.IPAddress), city, region, country, valueFromPtr(entry.Device), valueFromPtr(entry.IPSource),
+				valueFromPtr(entry.GeoSource), valueFromPtr(entry.GeoRelease), valueFromPtr(entry.GeoDBSHA256)})
 		}
-		return &historyTestRows{columns: []string{"id", "method", "logged_in_at", "ip_address", "geo_city", "geo_region", "geo_country", "user_agent", "ip_source"}, values: values}, nil
+		return &historyTestRows{columns: []string{"id", "method", "logged_in_at", "ip_address", "geo_city", "geo_region", "geo_country", "user_agent", "ip_source", "geo_source", "geo_db_release", "geo_db_sha256"}, values: values}, nil
 	default:
 		return nil, errors.New("unexpected query: " + query)
 	}
@@ -226,49 +228,22 @@ func TestSecondFactorMethod(t *testing.T) {
 	}
 }
 
-func TestLoginRequestEvidenceTrustAndSanitization(t *testing.T) {
-	const proxyToken = "test-proxy-token-with-at-least-32-characters"
+func TestLoginRequestEvidenceDirectSocketAndSanitization(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
-	r.RemoteAddr = "172.18.0.1:54321"
-	r.Header.Set("X-Auth-Proxy-Token", proxyToken)
+	r.RemoteAddr = "8.8.8.8:54321"
 	r.Header.Set("X-Auth-Client-IP", "2001:db8::1")
-	r.Header.Set("X-Auth-IP-Source", "cloudflare")
-	r.Header.Set("X-Auth-Geo-City", "Tokyo")
-	r.Header.Set("X-Auth-Geo-Region", "Tokyo")
-	r.Header.Set("X-Auth-Geo-Country", "jp")
+	r.Header.Set("X-Auth-Geo-City", "Spoofed location must be ignored")
+	r.Header.Set("X-Forwarded-For", "1.1.1.1")
+	r.Header.Set("X-Real-IP", "1.1.1.1")
 	r.Header.Set("User-Agent", "ExampleBrowser/1.0")
-	ip, location, device, source := loginRequestEvidence(r, proxyToken, netip.MustParseAddr("172.18.0.1"))
-	if stringValue(ip) != "2001:db8::1" || location == nil || location.City != "Tokyo" || location.Country != "JP" || stringValue(device) != "ExampleBrowser/1.0" || stringValue(source) != "cloudflare" {
-		t.Fatalf("trusted proxy evidence: ip=%v location=%+v device=%v source=%v", ip, location, device, source)
+	ip, device, source := loginRequestEvidence(r, netip.MustParseAddr("172.18.0.1"))
+	if stringValue(ip) != "8.8.8.8" || stringValue(device) != "ExampleBrowser/1.0" || stringValue(source) != "direct_socket" {
+		t.Fatalf("untrusted proxy headers were accepted: ip=%v source=%v", ip, source)
 	}
-	r.RemoteAddr = "203.0.113.10:12345"
-	ip, location, _, source = loginRequestEvidence(r, proxyToken, netip.Addr{})
-	if stringValue(ip) != "203.0.113.10" || location != nil || stringValue(source) != "direct_socket" {
-		t.Fatalf("untrusted proxy headers were accepted: ip=%v location=%+v source=%v", ip, location, source)
-	}
-	r.RemoteAddr = "172.18.0.1:54321"
-	r.Header.Set("X-Auth-IP-Source", "origin_socket")
-	_, location, _, _ = loginRequestEvidence(r, proxyToken, netip.Addr{})
-	if location != nil {
-		t.Fatalf("direct-origin geolocation was trusted: %+v", location)
-	}
-	r.Header.Set("X-Auth-IP-Source", "cloudflare")
-	r.Header.Set("X-Auth-Geo-Country", "XX")
-	r.Header.Del("X-Auth-Geo-City")
-	r.Header.Del("X-Auth-Geo-Region")
-	_, location, _, _ = loginRequestEvidence(r, proxyToken, netip.Addr{})
-	if location != nil {
-		t.Fatalf("unknown Cloudflare country was recorded: %+v", location)
-	}
-	r.Header.Set("X-Auth-Proxy-Token", "forged-token")
-	ip, location, _, source = loginRequestEvidence(r, proxyToken, netip.Addr{})
-	if ip != nil || location != nil || source != nil {
-		t.Fatalf("untrusted Docker peer headers were accepted: ip=%v location=%+v source=%v", ip, location, source)
-	}
-	r.Header.Set("X-Auth-Proxy-Token", proxyToken)
-	ip, location, _, source = loginRequestEvidence(r, "", netip.Addr{})
-	if ip != nil || location != nil || source != nil {
-		t.Fatalf("empty proxy token trusted headers: ip=%v location=%+v source=%v", ip, location, source)
+	r.RemoteAddr = "172.18.0.2:54321"
+	ip, _, source = loginRequestEvidence(r, netip.MustParseAddr("172.18.0.1"))
+	if ip != nil || source != nil {
+		t.Fatalf("untrusted Docker peer headers were accepted: ip=%v source=%v", ip, source)
 	}
 	if got := cleanHistoryText("abc\r\n=HYPERLINK(\"x\")", 100); got != "abc=HYPERLINK(\"x\")" {
 		t.Fatalf("history text sanitization = %q", got)
@@ -278,16 +253,17 @@ func TestLoginRequestEvidenceTrustAndSanitization(t *testing.T) {
 func TestLoginRequestEvidenceExistingNginxFallback(t *testing.T) {
 	trustedPeer := netip.MustParseAddr("172.18.0.1")
 	for _, test := range []struct {
-		name, peer, realIP, cfIP, forgedAuthIP, wantIP, wantSource string
+		name, peer, realIP, cfIP, wantIP, wantSource string
 	}{
-		{"Cloudflare IPv4", "172.18.0.1:5000", "173.245.48.10", "203.0.113.10", "198.51.100.55", "203.0.113.10", "cloudflare"},
-		{"Cloudflare IPv6", "172.18.0.1:5000", "2606:4700::1", "2001:db8::10", "198.51.100.55", "2001:db8::10", "cloudflare"},
-		{"direct origin ignores forged CF and X-Auth", "172.18.0.1:5000", "198.51.100.8", "203.0.113.10", "198.51.100.55", "198.51.100.8", "nginx_remote_addr"},
-		{"invalid real IP", "172.18.0.1:5000", "garbage", "203.0.113.10", "198.51.100.55", "", ""},
-		{"missing Cloudflare visitor IP", "172.18.0.1:5000", "173.245.48.10", "", "198.51.100.55", "", ""},
-		{"invalid Cloudflare visitor IP", "172.18.0.1:5000", "173.245.48.10", "127.0.0.1", "198.51.100.55", "", ""},
-		{"sibling Docker container", "172.18.0.2:5000", "173.245.48.10", "203.0.113.10", "198.51.100.55", "", ""},
-		{"wrong configured gateway", "172.18.0.3:5000", "173.245.48.10", "203.0.113.10", "198.51.100.55", "", ""},
+		{"Cloudflare IPv4", "172.18.0.1:5000", "173.245.48.10", "203.0.113.10", "203.0.113.10", "cloudflare"},
+		{"Cloudflare IPv6", "172.18.0.1:5000", "2606:4700::1", "2001:db8::10", "2001:db8::10", "cloudflare"},
+		{"direct origin ignores forged CF and X-Auth", "172.18.0.1:5000", "198.51.100.8", "203.0.113.10", "198.51.100.8", "nginx_remote_addr"},
+		{"invalid real IP", "172.18.0.1:5000", "garbage", "203.0.113.10", "", ""},
+		{"missing Cloudflare visitor IP", "172.18.0.1:5000", "173.245.48.10", "", "", ""},
+		{"invalid Cloudflare visitor IP", "172.18.0.1:5000", "173.245.48.10", "127.0.0.1", "", ""},
+		{"Cloudflare pseudo IPv4", "172.18.0.1:5000", "173.245.48.10", "240.1.2.3", "", ""},
+		{"sibling Docker container", "172.18.0.2:5000", "173.245.48.10", "203.0.113.10", "", ""},
+		{"wrong configured gateway", "172.18.0.3:5000", "173.245.48.10", "203.0.113.10", "", ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			r := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
@@ -295,27 +271,14 @@ func TestLoginRequestEvidenceExistingNginxFallback(t *testing.T) {
 			r.Header.Set("X-Real-IP", test.realIP)
 			r.Header.Set("CF-Connecting-IP", test.cfIP)
 			r.Header.Set("X-Forwarded-For", "192.0.2.200")
-			r.Header.Set("X-Auth-Client-IP", test.forgedAuthIP)
+			r.Header.Set("X-Auth-Client-IP", "198.51.100.55")
 			r.Header.Set("X-Auth-IP-Source", "cloudflare")
 			r.Header.Set("X-Auth-Geo-City", "Fake City")
-			ip, location, _, source := loginRequestEvidence(r, "", trustedPeer)
-			if stringValue(ip) != test.wantIP || stringValue(source) != test.wantSource || location != nil {
-				t.Fatalf("fallback evidence: ip=%q source=%q location=%+v, want ip=%q source=%q", stringValue(ip), stringValue(source), location, test.wantIP, test.wantSource)
+			ip, _, source := loginRequestEvidence(r, trustedPeer)
+			if stringValue(ip) != test.wantIP || stringValue(source) != test.wantSource {
+				t.Fatalf("fallback evidence: ip=%q source=%q, want ip=%q source=%q", stringValue(ip), stringValue(source), test.wantIP, test.wantSource)
 			}
 		})
-	}
-	const proxyToken = "test-proxy-token-with-at-least-32-characters"
-	r := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
-	r.RemoteAddr = "172.18.0.1:5000"
-	r.Header.Set("X-Auth-Proxy-Token", proxyToken)
-	r.Header.Set("X-Auth-Client-IP", "invalid")
-	r.Header.Set("X-Auth-IP-Source", "cloudflare")
-	r.Header.Set("X-Auth-Geo-City", "Spoofed")
-	r.Header.Set("X-Real-IP", "173.245.48.10")
-	r.Header.Set("CF-Connecting-IP", "203.0.113.10")
-	ip, location, _, source := loginRequestEvidence(r, proxyToken, trustedPeer)
-	if stringValue(ip) != "203.0.113.10" || stringValue(source) != "cloudflare" || location != nil {
-		t.Fatalf("invalid token-route evidence leaked location into fallback: ip=%q source=%q location=%+v", stringValue(ip), stringValue(source), location)
 	}
 }
 
@@ -348,16 +311,14 @@ func TestFinishLoginCommitsSessionAndEvidenceTogether(t *testing.T) {
 	for _, failHistory := range []bool{false, true} {
 		t.Run(map[bool]string{false: "success", true: "history failure"}[failHistory], func(t *testing.T) {
 			state := &historyTestConnector{failHistoryInsert: failHistory}
-			const proxyToken = "test-proxy-token-with-at-least-32-characters"
-			a := &app{db: sql.OpenDB(state), alerts: &alerter{}, historyProxyToken: proxyToken}
+			a := &app{db: sql.OpenDB(state), alerts: &alerter{}, historyTrustedProxyPeer: netip.MustParseAddr("172.18.0.1"), geoDB: makeTestGeoDB(t)}
 			defer a.db.Close()
 			r := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
 			r.RemoteAddr = "172.18.0.1:1234"
-			r.Header.Set("X-Auth-Proxy-Token", proxyToken)
-			r.Header.Set("X-Auth-Client-IP", "203.0.113.10")
-			r.Header.Set("X-Auth-IP-Source", "cloudflare")
-			r.Header.Set("X-Auth-Geo-City", "Tokyo")
-			r.Header.Set("X-Auth-Geo-Country", "JP")
+			r.Header.Set("X-Real-IP", "173.245.48.10")
+			r.Header.Set("CF-Connecting-IP", "8.8.8.8")
+			r.Header.Set("X-Auth-Geo-City", "Spoofed")
+			r.Header.Set("X-Auth-Geo-Country", "ZZ")
 			r.Header.Set("User-Agent", "ExampleBrowser/1.0")
 			w := httptest.NewRecorder()
 			a.finishLogin(w, r, 7, "passkey")
@@ -371,21 +332,21 @@ func TestFinishLoginCommitsSessionAndEvidenceTogether(t *testing.T) {
 				t.Fatalf("login was not committed atomically: status=%d cookies=%d sessions=%d history=%d commits=%d", w.Code, len(w.Result().Cookies()), len(state.sessions), len(state.history), state.commits)
 			}
 			entry := state.history[0].entry
-			if entry.Method != "passkey" || time.Since(entry.LoggedInAt) > time.Minute || stringValue(entry.IPAddress) != "203.0.113.10" || entry.Location == nil || entry.Location.City != "Tokyo" || stringValue(entry.Device) != "ExampleBrowser/1.0" {
+			if entry.Method != "passkey" || time.Since(entry.LoggedInAt) > time.Minute || stringValue(entry.IPAddress) != "8.8.8.8" || stringValue(entry.IPSource) != "cloudflare" || entry.Location == nil || entry.Location.City != "Mountain View" || entry.Location.Region != "California" || entry.Location.Country != "US" || stringValue(entry.Device) != "ExampleBrowser/1.0" || stringValue(entry.GeoSource) != geoIPSource || stringValue(entry.GeoRelease) != "2026-10" || stringValue(entry.GeoDBSHA256) != a.geoDB.sha256 {
 				t.Fatalf("unexpected history evidence: %+v", entry)
 			}
 		})
 	}
 }
 
-func TestFinishLoginPersistsExistingNginxFallback(t *testing.T) {
+func TestFinishLoginPersistsDirectSocketEvidence(t *testing.T) {
 	state := &historyTestConnector{}
-	a := &app{db: sql.OpenDB(state), alerts: &alerter{}, historyTrustedProxyPeer: netip.MustParseAddr("172.18.0.1")}
+	a := &app{db: sql.OpenDB(state), alerts: &alerter{}, historyTrustedProxyPeer: netip.MustParseAddr("172.18.0.1"), geoDB: makeTestGeoDB(t)}
 	defer a.db.Close()
 	r := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
-	r.RemoteAddr = "172.18.0.1:5000"
+	r.RemoteAddr = "8.8.8.8:5000"
 	r.Header.Set("X-Real-IP", "173.245.48.10")
-	r.Header.Set("CF-Connecting-IP", "203.0.113.10")
+	r.Header.Set("CF-Connecting-IP", "1.1.1.1")
 	r.Header.Set("X-Auth-Client-IP", "198.51.100.55")
 	r.Header.Set("X-Auth-Geo-City", "Spoofed")
 	r.Header.Set("User-Agent", "ExampleBrowser/1.0")
@@ -395,8 +356,8 @@ func TestFinishLoginPersistsExistingNginxFallback(t *testing.T) {
 		t.Fatalf("fallback login failed: status=%d history=%d", w.Code, len(state.history))
 	}
 	entry := state.history[0].entry
-	if stringValue(entry.IPAddress) != "203.0.113.10" || stringValue(entry.IPSource) != "cloudflare" || entry.Location != nil || stringValue(entry.Device) != "ExampleBrowser/1.0" {
-		t.Fatalf("fallback persisted wrong evidence: %+v", entry)
+	if stringValue(entry.IPAddress) != "8.8.8.8" || stringValue(entry.IPSource) != "direct_socket" || entry.Location == nil || entry.Location.City != "Mountain View" || stringValue(entry.GeoSource) != geoIPSource || stringValue(entry.GeoRelease) != "2026-10" || stringValue(entry.GeoDBSHA256) != a.geoDB.sha256 || stringValue(entry.Device) != "ExampleBrowser/1.0" {
+		t.Fatalf("direct socket persisted wrong evidence: %+v", entry)
 	}
 }
 
@@ -418,6 +379,11 @@ func TestLoginHistoryAndCSVAuthorizationScopeAndFullExport(t *testing.T) {
 	}
 	injection := "=HYPERLINK(\"https://bad.example\")"
 	state.history[0].entry.Device = &injection
+	geoSource, geoRelease, geoHash := geoIPSource, "2026-10", strings.Repeat("a", 64)
+	state.history[0].entry.Location = &loginLocation{City: "Mountain View", Region: "California", Country: "US"}
+	state.history[0].entry.GeoSource = &geoSource
+	state.history[0].entry.GeoRelease = &geoRelease
+	state.history[0].entry.GeoDBSHA256 = &geoHash
 	state.history = append(state.history, storedHistory{userID: 8, entry: loginHistoryEntry{ID: 56, Method: "passkey", LoggedInAt: old}})
 	a := &app{db: sql.OpenDB(state), uiURL: "https://auth.example.test"}
 	defer a.db.Close()
@@ -469,7 +435,7 @@ func TestLoginHistoryAndCSVAuthorizationScopeAndFullExport(t *testing.T) {
 	if err != nil || len(records) != 56 {
 		t.Fatalf("CSV rows=%d, err=%v", len(records), err)
 	}
-	if records[1][0] != "7" || records[1][1] != "1" || records[1][2] != "2026-10-07T00:00:01Z" || records[1][10] != "'"+injection || records[55][1] != "55" {
+	if records[1][0] != "7" || records[1][1] != "1" || records[1][2] != "2026-10-07T00:00:01Z" || records[1][6] != "Mountain View" || records[1][9] != geoIPSource || records[1][10] != "'"+injection || records[1][11] != geoRelease || records[1][12] != geoHash || records[1][13] != geoIPURL || records[2][9] != "" || records[55][1] != "55" {
 		t.Fatalf("CSV first/last row: first=%v last=%v", records[1], records[55])
 	}
 	if strings.Contains(w.Body.String(), "passkey") || !strings.Contains(state.lastHistoryQuery, "WHERE user_id=? ORDER BY logged_in_at ASC,id ASC") || strings.Contains(state.lastHistoryQuery, "LIMIT") || len(state.lastHistoryArgs) != 1 || state.lastHistoryArgs[0].Value != int64(7) {
