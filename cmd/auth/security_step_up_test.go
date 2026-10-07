@@ -12,18 +12,28 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/pquerna/otp/totp"
 )
 
 type securityTestConnector struct {
-	verified      driver.Value
-	totpCount     int64
-	recoveryCount int64
-	email         string
-	codeHash      string
-	codeExpires   time.Time
-	codeFailures  int64
-	hasCode       bool
+	verified        driver.Value
+	totpCount       int64
+	recoveryCount   int64
+	email           string
+	codeHash        string
+	codeExpires     time.Time
+	codeFailures    int64
+	hasCode         bool
+	userLockEntered chan struct{}
+	releaseUserLock chan struct{}
+	recoveryMutated bool
+	totpEncrypted   string
+	totpCodeUsed    bool
+	recoveryUsed    bool
+	totpCodeHash    string
+	recoveryHash    string
 }
 
 func (c *securityTestConnector) Connect(context.Context) (driver.Conn, error) {
@@ -51,7 +61,7 @@ type securityTestTx struct{}
 func (*securityTestTx) Commit() error   { return nil }
 func (*securityTestTx) Rollback() error { return nil }
 
-func (c *securityTestConn) ExecContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Result, error) {
+func (c *securityTestConn) ExecContext(_ context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	switch {
 	case strings.Contains(query, "INSERT INTO auth_rate_limits"):
 	case strings.Contains(query, "DELETE FROM auth_security_codes"):
@@ -60,12 +70,28 @@ func (c *securityTestConn) ExecContext(_ context.Context, query string, _ []driv
 		c.config.codeFailures++
 	case strings.Contains(query, "UPDATE auth_sessions SET security_verified_at"):
 		c.config.verified = time.Now().UTC()
+	case strings.Contains(query, "DELETE FROM recovery_codes"), strings.Contains(query, "INSERT INTO recovery_codes"):
+		c.config.recoveryMutated = true
+	case strings.Contains(query, "DELETE FROM auth_security_totp_uses"):
+	case strings.Contains(query, "INSERT INTO auth_security_totp_uses"):
+		codeHash, _ := args[1].Value.(string)
+		if c.config.totpCodeUsed && c.config.totpCodeHash == codeHash {
+			return nil, &mysql.MySQLError{Number: 1062, Message: "duplicate TOTP code"}
+		}
+		c.config.totpCodeUsed = true
+		c.config.totpCodeHash = codeHash
+	case strings.Contains(query, "UPDATE recovery_codes SET is_used=1"):
+		codeHash, _ := args[1].Value.(string)
+		if c.config.recoveryUsed || codeHash != c.config.recoveryHash {
+			return driver.RowsAffected(0), nil
+		}
+		c.config.recoveryUsed = true
 	default:
 		return nil, errors.New("unexpected exec: " + query)
 	}
 	return driver.RowsAffected(1), nil
 }
-func (c *securityTestConn) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
+func (c *securityTestConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
 	switch {
 	case strings.Contains(query, "FROM auth_sessions s JOIN users"):
 		return &securityTestRows{columns: []string{"user_id"}, values: [][]driver.Value{{int64(7)}}}, nil
@@ -73,19 +99,28 @@ func (c *securityTestConn) QueryContext(_ context.Context, query string, _ []dri
 		return &securityTestRows{columns: []string{"attempts"}, values: [][]driver.Value{{int64(1)}}}, nil
 	case strings.Contains(query, "SELECT email FROM users"):
 		return &securityTestRows{columns: []string{"email"}, values: [][]driver.Value{{c.config.email}}}, nil
+	case strings.Contains(query, "SELECT is_deleted=0 FROM users"):
+		if c.config.userLockEntered != nil {
+			close(c.config.userLockEntered)
+			<-c.config.releaseUserLock
+		}
+		return &securityTestRows{columns: []string{"active"}, values: [][]driver.Value{{true}}}, nil
 	case strings.Contains(query, "SELECT user_id FROM auth_sessions"):
 		return &securityTestRows{columns: []string{"user_id"}, values: [][]driver.Value{{int64(7)}}}, nil
 	case strings.Contains(query, "SELECT secret FROM totp_secrets"):
 		if c.config.totpCount > 0 {
-			return &securityTestRows{columns: []string{"secret"}, values: [][]driver.Value{{"encrypted-test-secret"}}}, nil
+			return &securityTestRows{columns: []string{"secret"}, values: [][]driver.Value{{c.config.totpEncrypted}}}, nil
 		}
 		return &securityTestRows{columns: []string{"secret"}}, nil
 	case strings.Contains(query, "FROM auth_security_codes WHERE session_hash"):
-		if !c.config.hasCode {
+		if !c.config.hasCode || args[0].Value != digest("test-session") {
 			return &securityTestRows{columns: []string{"email", "hashed_code", "expires_at", "failed_attempts"}}, nil
 		}
 		return &securityTestRows{columns: []string{"email", "hashed_code", "expires_at", "failed_attempts"}, values: [][]driver.Value{{c.config.email, c.config.codeHash, c.config.codeExpires, c.config.codeFailures}}}, nil
 	case strings.Contains(query, "SELECT security_verified_at FROM auth_sessions"):
+		if args[0].Value != digest("test-session") {
+			return &securityTestRows{columns: []string{"security_verified_at"}, values: [][]driver.Value{{nil}}}, nil
+		}
 		return &securityTestRows{columns: []string{"security_verified_at"}, values: [][]driver.Value{{c.config.verified}}}, nil
 	case strings.Contains(query, "SELECT COUNT(*) FROM totp_secrets"):
 		return &securityTestRows{columns: []string{"count"}, values: [][]driver.Value{{c.config.totpCount}}}, nil
@@ -121,8 +156,17 @@ func securityTestRequest() *http.Request {
 	return r
 }
 
+func securityVerifyRequest(method, code string) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "/auth/security/step-up/verify", strings.NewReader(`{"method":"`+method+`","code":"`+code+`"}`))
+	r.Header.Set("Origin", "http://localhost:3068")
+	r.Header.Set("X-Auth-UI", "1")
+	r.Header.Set("Content-Type", "application/json")
+	r.AddCookie(&http.Cookie{Name: "taskly_auth_session", Value: "test-session"})
+	return r
+}
+
 func securityTestApp(config *securityTestConnector, required bool) *app {
-	return &app{db: sql.OpenDB(config), uiURL: "http://localhost:3068", securityStepUpRequired: required, webAuthn: &webauthn.WebAuthn{}, internalToken: "test-secret"}
+	return &app{db: sql.OpenDB(config), uiURL: "http://localhost:3068", securityStepUpRequired: required, webAuthn: &webauthn.WebAuthn{}, internalToken: "test-secret", alerts: &alerter{}}
 }
 
 func TestSecurityMutationHandlersRequireVerifiedSession(t *testing.T) {
@@ -175,6 +219,17 @@ func TestSecurityGrantIsBoundToSessionAndExpires(t *testing.T) {
 				t.Fatalf("id=%d allowed=%v response=%d", id, ok, w.Code)
 			}
 		})
+	}
+}
+
+func TestSecurityGrantDoesNotAuthorizeAnotherSession(t *testing.T) {
+	a := securityTestApp(&securityTestConnector{verified: time.Now().UTC()}, true)
+	defer a.db.Close()
+	r := securityTestRequest()
+	r.Header.Set("Cookie", "taskly_auth_session=other-session")
+	w := httptest.NewRecorder()
+	if _, ok := a.securitySettingsUser(w, r); ok || w.Code != http.StatusForbidden {
+		t.Fatalf("other session grant = allowed %v, response %d %q", ok, w.Code, w.Body.String())
 	}
 }
 
@@ -265,5 +320,85 @@ func TestSecurityEmailCannotBypassTOTP(t *testing.T) {
 	a.verifySecurityStepUp(verify, request)
 	if verify.Code != http.StatusConflict || !strings.Contains(verify.Body.String(), "method_unavailable") || state.verified != nil {
 		t.Fatalf("email verification with TOTP = %d %q", verify.Code, verify.Body.String())
+	}
+}
+
+func TestSecurityGrantInvalidatedWhileMutationWaitsForUserLock(t *testing.T) {
+	state := &securityTestConnector{
+		verified:        time.Now().UTC(),
+		userLockEntered: make(chan struct{}),
+		releaseUserLock: make(chan struct{}),
+	}
+	a := securityTestApp(state, true)
+	defer a.db.Close()
+	result := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		w := httptest.NewRecorder()
+		a.generateRecoveryCodes(w, securityTestRequest())
+		result <- w
+	}()
+	select {
+	case <-state.userLockEntered:
+	case <-time.After(5 * time.Second):
+		close(state.releaseUserLock)
+		t.Fatal("mutation never reached the locked user row")
+	}
+	// Model a concurrent TOTP transition committing while this mutation waits
+	// for that same user row. Its first, unlocked grant check has already passed.
+	state.verified = nil
+	close(state.releaseUserLock)
+	select {
+	case w := <-result:
+		if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "step_up_required") || state.recoveryMutated {
+			t.Fatalf("stale grant mutation = %d %q, writes=%v", w.Code, w.Body.String(), state.recoveryMutated)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("mutation did not finish after grant invalidation")
+	}
+}
+
+func TestSecurityTOTPCodeCannotBeReplayed(t *testing.T) {
+	const secret = "JBSWY3DPEHPK3PXP"
+	t.Setenv("TOTP_ENC_KEY", "step-up-test-key")
+	encrypted, err := encryptTOTP(secret, "step-up-test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := totp.GenerateCode(secret, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &securityTestConnector{email: "user@example.com", totpCount: 1, totpEncrypted: encrypted}
+	a := securityTestApp(state, true)
+	defer a.db.Close()
+	first := httptest.NewRecorder()
+	a.verifySecurityStepUp(first, securityVerifyRequest("totp", code))
+	if first.Code != http.StatusNoContent || !state.totpCodeUsed {
+		t.Fatalf("first TOTP verification = %d %q", first.Code, first.Body.String())
+	}
+	second := httptest.NewRecorder()
+	a.verifySecurityStepUp(second, securityVerifyRequest("totp", code))
+	if second.Code != http.StatusUnauthorized || !strings.Contains(second.Body.String(), "invalid_code") {
+		t.Fatalf("replayed TOTP verification = %d %q", second.Code, second.Body.String())
+	}
+}
+
+func TestSecurityRecoveryCodeCannotBeReplayed(t *testing.T) {
+	code, err := newRecoveryCode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &securityTestConnector{email: "user@example.com", totpCount: 1, recoveryHash: digest(code)}
+	a := securityTestApp(state, true)
+	defer a.db.Close()
+	first := httptest.NewRecorder()
+	a.verifySecurityStepUp(first, securityVerifyRequest("recovery", code))
+	if first.Code != http.StatusNoContent || !state.recoveryUsed {
+		t.Fatalf("first recovery verification = %d %q", first.Code, first.Body.String())
+	}
+	second := httptest.NewRecorder()
+	a.verifySecurityStepUp(second, securityVerifyRequest("recovery", code))
+	if second.Code != http.StatusUnauthorized || !strings.Contains(second.Body.String(), "invalid_code") {
+		t.Fatalf("replayed recovery verification = %d %q", second.Code, second.Body.String())
 	}
 }

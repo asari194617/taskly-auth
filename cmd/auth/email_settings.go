@@ -67,6 +67,9 @@ func (a *app) updateEmailCodeSettings(w http.ResponseWriter, r *http.Request) {
 		a.emailSettingsStorageError(w)
 		return
 	}
+	if !a.securitySettingsGrantInTx(w, r, tx, id) {
+		return
+	}
 	if current == *input.Enabled {
 		w.WriteHeader(http.StatusNoContent)
 		return

@@ -88,9 +88,18 @@ func (a *app) totpSetup(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, http.StatusTooManyRequests, "rate_limited")
 		return
 	}
-	var email string
-	if err := a.db.QueryRowContext(r.Context(), `SELECT email FROM users WHERE id=? AND is_deleted=0`, id).Scan(&email); err != nil {
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
 		a.totpStorageError(w)
+		return
+	}
+	defer tx.Rollback()
+	var email string
+	if err := tx.QueryRowContext(r.Context(), `SELECT email FROM users WHERE id=? AND is_deleted=0 FOR UPDATE`, id).Scan(&email); err != nil {
+		a.totpStorageError(w)
+		return
+	}
+	if !a.securitySettingsGrantInTx(w, r, tx, id) {
 		return
 	}
 	key, err := totp.Generate(totp.GenerateOpts{Issuer: "Taskly", AccountName: email, SecretSize: 20})
@@ -103,8 +112,12 @@ func (a *app) totpSetup(w http.ResponseWriter, r *http.Request) {
 		a.totpStorageError(w)
 		return
 	}
-	_, err = a.db.ExecContext(r.Context(), `INSERT INTO auth_totp_setups (user_id,encrypted_secret,expires_at) VALUES (?,?,?) ON DUPLICATE KEY UPDATE encrypted_secret=VALUES(encrypted_secret),expires_at=VALUES(expires_at),created_at=UTC_TIMESTAMP()`, id, encrypted, time.Now().UTC().Add(10*time.Minute))
+	_, err = tx.ExecContext(r.Context(), `INSERT INTO auth_totp_setups (user_id,encrypted_secret,expires_at) VALUES (?,?,?) ON DUPLICATE KEY UPDATE encrypted_secret=VALUES(encrypted_secret),expires_at=VALUES(expires_at),created_at=UTC_TIMESTAMP()`, id, encrypted, time.Now().UTC().Add(10*time.Minute))
 	if err != nil {
+		a.totpStorageError(w)
+		return
+	}
+	if err := tx.Commit(); err != nil {
 		a.totpStorageError(w)
 		return
 	}
@@ -148,6 +161,9 @@ func (a *app) totpActivate(w http.ResponseWriter, r *http.Request) {
 	var activeUser uint64
 	if err := tx.QueryRowContext(r.Context(), `SELECT id FROM users WHERE id=? AND is_deleted=0 FOR UPDATE`, id).Scan(&activeUser); err != nil {
 		a.totpStorageError(w)
+		return
+	}
+	if !a.securitySettingsGrantInTx(w, r, tx, id) {
 		return
 	}
 	var encrypted string
@@ -225,6 +241,9 @@ func (a *app) totpDisable(w http.ResponseWriter, r *http.Request) {
 	var hasPassword, emailAllowed bool
 	if err := tx.QueryRowContext(r.Context(), `SELECT hashed_password IS NOT NULL AND hashed_password<>'',email_code_allowed FROM users WHERE id=? AND is_deleted=0 FOR UPDATE`, id).Scan(&hasPassword, &emailAllowed); err != nil {
 		a.totpStorageError(w)
+		return
+	}
+	if !a.securitySettingsGrantInTx(w, r, tx, id) {
 		return
 	}
 	var encrypted string

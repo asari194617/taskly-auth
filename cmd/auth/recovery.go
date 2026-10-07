@@ -64,6 +64,9 @@ func (a *app) generateRecoveryCodes(w http.ResponseWriter, r *http.Request) {
 		a.recoveryStorageError(w)
 		return
 	}
+	if !a.securitySettingsGrantInTx(w, r, tx, id) {
+		return
+	}
 	if _, err := tx.ExecContext(r.Context(), `DELETE FROM recovery_codes WHERE user_id=? AND is_used=0`, id); err != nil {
 		a.recoveryStorageError(w)
 		return

@@ -82,6 +82,35 @@ func (a *app) securitySettingsUser(w http.ResponseWriter, r *http.Request) (uint
 	return id, true
 }
 
+// Call after locking the users row and before any settings write. Holding both
+// locks until commit prevents a factor transition from invalidating the grant
+// between the preliminary request check and the actual mutation.
+func (a *app) securitySettingsGrantInTx(w http.ResponseWriter, r *http.Request, tx *sql.Tx, id uint64) bool {
+	if !a.securityStepUpRequired {
+		return true
+	}
+	cookie, err := r.Cookie("taskly_auth_session")
+	if err != nil || cookie.Value == "" {
+		oauthError(w, http.StatusUnauthorized, "login_required")
+		return false
+	}
+	var verified sql.NullTime
+	err = tx.QueryRowContext(r.Context(), `SELECT security_verified_at FROM auth_sessions WHERE token_hash=? AND user_id=? AND expires_at>UTC_TIMESTAMP() FOR UPDATE`, digest(cookie.Value), id).Scan(&verified)
+	if errors.Is(err, sql.ErrNoRows) {
+		oauthError(w, http.StatusUnauthorized, "login_required")
+		return false
+	}
+	if err != nil {
+		oauthError(w, http.StatusServiceUnavailable, "temporarily_unavailable")
+		return false
+	}
+	if !securityGrantValid(verified, time.Now().UTC()) {
+		oauthError(w, http.StatusForbidden, "step_up_required")
+		return false
+	}
+	return true
+}
+
 func (a *app) securityStepUpStatus(w http.ResponseWriter, r *http.Request) {
 	if !a.requireUI(w, r) {
 		return

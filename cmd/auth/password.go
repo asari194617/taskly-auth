@@ -73,6 +73,9 @@ func (a *app) changePassword(w http.ResponseWriter, r *http.Request) {
 		a.passwordStorageError(w)
 		return
 	}
+	if !a.securitySettingsGrantInTx(w, r, tx, id) {
+		return
+	}
 	if old.Valid && old.String != "" && bcrypt.CompareHashAndPassword([]byte(old.String), []byte(input.Current)) != nil {
 		oauthError(w, 401, "invalid_credentials")
 		return
