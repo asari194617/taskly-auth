@@ -3,15 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Taskly ログアウト</title>
-    <script type="module" src="/src/logout.ts"></script>
+    <title>ログアウト | Taskly 認証</title>
+    <script type="module" src="/src/logout-react.tsx"></script>
   </head>
-  <body>
-    <main>
-      <label class="theme-control">テーマ <select data-theme-select aria-label="テーマ"><option value="system">自動</option><option value="light">ライト</option><option value="dark">ダーク</option></select></label>
-      <h1>ログアウトしています</h1>
-      <p id="error" class="message error" role="alert"></p>
-      <button id="retry" type="button" hidden>再試行</button>
-    </main>
-  </body>
+  <body data-charcoal><div id="app"></div></body>
 </html>

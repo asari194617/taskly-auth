@@ -355,7 +355,7 @@ assert json.load(response)["active"] is False
 
 response = request(ui + "/logout")
 assert response.status == 200, response.status
-assert b"/src/logout.ts" in response.read()
+assert b"/src/logout-react.tsx" in response.read()
 response = request(api + "/auth/logout", {}, {"Origin": ui, "X-Auth-UI": "1"})
 assert response.status == 204, response.read()
 response = request(api + "/oauth/authorize?" + params)
