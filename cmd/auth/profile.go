@@ -211,10 +211,23 @@ func (a *app) updateProfile(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, http.StatusServiceUnavailable, "profile_unavailable")
 		return
 	}
-	count, _ := result.RowsAffected()
-	if count != 1 {
-		oauthError(w, http.StatusUnauthorized, "login_required")
+	count, err := result.RowsAffected()
+	if err != nil {
+		oauthError(w, http.StatusServiceUnavailable, "profile_unavailable")
 		return
+	}
+	if count == 0 {
+		// MySQL reports zero changed rows when the requested name is already stored.
+		// Confirm the account still exists so a repeated save can retry synchronization.
+		var existingID uint64
+		if err := a.db.QueryRowContext(r.Context(), "SELECT id FROM users WHERE id=? AND is_deleted=0", id).Scan(&existingID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				oauthError(w, http.StatusUnauthorized, "login_required")
+			} else {
+				oauthError(w, http.StatusServiceUnavailable, "profile_unavailable")
+			}
+			return
+		}
 	}
 	if err := syncTasklyProfile(r.Context(), id, name); err != nil {
 		a.alerts.send("Taskly auth profile synchronization pending")

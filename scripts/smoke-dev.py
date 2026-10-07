@@ -151,6 +151,13 @@ response = opener.open(urllib.request.Request(
 ))
 assert response.status == 200, response.status
 
+response = ui_json_request("/auth/profile")
+assert response.status == 200, response.read()
+profile = json.load(response)
+assert profile["email"] == email
+response = ui_json_request("/auth/profile", {"display_name": profile["display_name"]})
+assert response.status == 204, response.read()
+
 response = request(ui + "/passkeys")
 assert response.status == 200, response.status
 assert b'id="app"' in response.read()

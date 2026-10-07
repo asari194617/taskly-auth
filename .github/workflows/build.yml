@@ -48,6 +48,8 @@ jobs:
         run: |
           cp .env.example .env
           sed -i 's|^OAUTH_PUBLIC_CLIENTS_JSON=.*|OAUTH_PUBLIC_CLIENTS_JSON=[{"client_id":"taskly-dev","redirect_uri":"http://127.0.0.1/callback"}]|' .env
+          # The local smoke stack has no Taskly API; exercise its auth profile write separately.
+          sed -i 's|^TASKLY_PROFILE_SYNC_URL=.*|TASKLY_PROFILE_SYNC_URL=|' .env
           docker compose up -d --build
           for attempt in $(seq 1 90); do
             if curl -fsS http://localhost:3067/healthz && curl -fsS http://localhost:3068/login >/dev/null; then
