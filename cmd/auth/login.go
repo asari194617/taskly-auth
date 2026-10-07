@@ -158,7 +158,7 @@ func (a *app) verifySecondFactor(r *http.Request, id uint64, email string, input
 		return false
 	}
 	if input.Code != "" && emailAllowed {
-		return a.consumeEmailCode(r, email, input.Code)
+		return a.consumeEmailCode(r, id, email, input.Code)
 	}
 	if input.TOTP != "" {
 		var encrypted string
@@ -206,7 +206,7 @@ func decryptTOTP(encoded, key string) (string, error) {
 	return string(plain), err
 }
 
-func (a *app) consumeEmailCode(r *http.Request, email, code string) bool {
+func (a *app) consumeEmailCode(r *http.Request, userID uint64, email, code string) bool {
 	if len(code) != 6 {
 		return false
 	}
@@ -215,26 +215,36 @@ func (a *app) consumeEmailCode(r *http.Request, email, code string) bool {
 		return false
 	}
 	defer tx.Rollback()
-	var id uint64
+	// Lock the account before its email codes, matching the order used by user
+	// updates. A code must never verify an address reassigned to another user.
+	var currentEmail string
+	var emailAllowed bool
+	if err := tx.QueryRowContext(r.Context(), `SELECT email,email_code_allowed FROM users WHERE id=? AND is_deleted=0 FOR UPDATE`, userID).Scan(&currentEmail, &emailAllowed); err != nil || !strings.EqualFold(currentEmail, email) || !emailAllowed {
+		return false
+	}
+	var codeID uint64
 	var hashed string
 	var expires time.Time
 	var consumed, locked sql.NullTime
 	var attempts int
-	err = tx.QueryRowContext(r.Context(), `SELECT id,hashed_code,expires_at,consumed_at,locked_until,failed_attempts FROM auth_login_codes WHERE email=? ORDER BY id DESC LIMIT 1 FOR UPDATE`, email).Scan(&id, &hashed, &expires, &consumed, &locked, &attempts)
+	err = tx.QueryRowContext(r.Context(), `SELECT id,hashed_code,expires_at,consumed_at,locked_until,failed_attempts FROM auth_login_codes WHERE email=? ORDER BY id DESC LIMIT 1 FOR UPDATE`, email).Scan(&codeID, &hashed, &expires, &consumed, &locked, &attempts)
 	if err != nil || consumed.Valid || time.Now().UTC().After(expires) || (locked.Valid && time.Now().UTC().Before(locked.Time)) {
 		return false
 	}
 	if !equal(hashed, digest(code)) {
 		attempts++
 		if attempts >= 5 {
-			_, _ = tx.ExecContext(r.Context(), `UPDATE auth_login_codes SET failed_attempts=?,locked_until=expires_at WHERE id=?`, attempts, id)
+			_, _ = tx.ExecContext(r.Context(), `UPDATE auth_login_codes SET failed_attempts=?,locked_until=expires_at WHERE id=?`, attempts, codeID)
 		} else {
-			_, _ = tx.ExecContext(r.Context(), `UPDATE auth_login_codes SET failed_attempts=? WHERE id=?`, attempts, id)
+			_, _ = tx.ExecContext(r.Context(), `UPDATE auth_login_codes SET failed_attempts=? WHERE id=?`, attempts, codeID)
 		}
 		_ = tx.Commit()
 		return false
 	}
-	if _, err := tx.ExecContext(r.Context(), `UPDATE auth_login_codes SET consumed_at=UTC_TIMESTAMP() WHERE id=?`, id); err != nil {
+	if _, err := tx.ExecContext(r.Context(), `UPDATE auth_login_codes SET consumed_at=UTC_TIMESTAMP() WHERE id=?`, codeID); err != nil {
+		return false
+	}
+	if _, err := tx.ExecContext(r.Context(), `INSERT INTO auth_email_verifications (user_id,email,verified_at) VALUES (?,?,UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE email=VALUES(email),hashed_code=NULL,expires_at=NULL,failed_attempts=0,verified_at=UTC_TIMESTAMP(),requested_at=NULL`, userID, currentEmail); err != nil {
 		return false
 	}
 	return tx.Commit() == nil
