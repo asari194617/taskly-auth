@@ -29,7 +29,7 @@ func (a *app) passkeyAccount(w http.ResponseWriter, r *http.Request, recent bool
 	var id uint64
 	var ok bool
 	if recent {
-		id, ok = a.recentSessionUser(r)
+		return a.securitySettingsUser(w, r)
 	} else {
 		id, ok = a.sessionUser(r)
 	}

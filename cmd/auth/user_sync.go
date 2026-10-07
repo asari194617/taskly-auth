@@ -156,6 +156,7 @@ func (a *app) applyUserUpdate(ctx context.Context, userID uint64, input updateUs
 	if !strings.EqualFold(oldEmail, email) {
 		statements := []string{
 			`DELETE FROM auth_email_verifications WHERE user_id=?`,
+			`DELETE FROM auth_security_codes WHERE user_id=?`,
 			`DELETE FROM sessions WHERE user_id=?`,
 			`DELETE FROM auth_sessions WHERE user_id=?`,
 			`DELETE FROM auth_challenges WHERE user_id=?`,

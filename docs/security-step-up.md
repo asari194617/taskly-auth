@@ -1,0 +1,13 @@
+# 認証設定の追加確認
+
+`AUTH_SECURITY_STEP_UP_REQUIRED=1` で認証設定の変更 API に追加確認を必須化します。既定値の `0` では従来の「ログインから10分以内」の条件を維持し、UI と API を順に配備できます。どちらの場合も、追加確認 API は利用できます。
+
+認証済みセッションから次を呼びます。既存の認証 UI と同じ `Origin`、`X-Auth-UI: 1`、Cookie が必要です。
+
+- `GET /auth/security/step-up/status`: `{ "required": true|false, "verified": true|false, "methods": ["email"|"totp"|"recovery"] }`。認証アプリが有効ならメールは選べません。未使用の復旧コードがある場合だけ `recovery` を返します。
+- `POST /auth/security/step-up/request-code` に `{}`: 認証アプリが未設定の場合、現在の登録メールへ専用コードを送信して `202` を返します。認証アプリが有効なら `409 totp_required` です。
+- `POST /auth/security/step-up/verify` に `{ "method": "email"|"totp"|"recovery", "code": "..." }`: 成功すると `204`。5分間、現在の認証セッションで設定変更ができます。コードは使い切りで、メールコードは5回失敗すると使えません。
+
+ゲート有効時、追加確認前の変更 API は `403 {"error":"step_up_required"}` を返します。セッションがなければ従来どおり `401 login_required` です。対象はパスワード、メールコード設定、復旧コード再発行、認証アプリの設定と解除、パスキーの登録と管理です。表示名変更とメールアドレス確認は対象外です。
+
+メールコードはログインコードとは別に保存します。`email_code_allowed` が無効でも、認証アプリを設定していない利用者には登録メールで追加確認できます。ログイン自体がメールコードのみの利用者の場合、これは独立した二要素ではなく、現在のメール所有を再確認する手段です。

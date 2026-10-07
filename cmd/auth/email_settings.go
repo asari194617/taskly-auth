@@ -31,9 +31,8 @@ func (a *app) updateEmailCodeSettings(w http.ResponseWriter, r *http.Request) {
 	if !a.requireUI(w, r) {
 		return
 	}
-	id, ok := a.recentSessionUser(r)
+	id, ok := a.securitySettingsUser(w, r)
 	if !ok {
-		oauthError(w, 401, "login_required")
 		return
 	}
 	var input struct {

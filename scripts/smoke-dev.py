@@ -143,6 +143,7 @@ assert ui_json_request("/auth/email-code/settings").status == 401
 assert ui_json_request("/auth/recovery/generate", {}).status == 401
 assert ui_json_request("/auth/totp/status").status == 401
 assert ui_json_request("/auth/totp/setup", {}).status == 401
+assert ui_json_request("/auth/security/step-up/status").status == 401
 
 body = json.dumps({"email": email, "password": password}).encode()
 response = opener.open(urllib.request.Request(
@@ -155,6 +156,8 @@ response = ui_json_request("/auth/profile")
 assert response.status == 200, response.read()
 profile = json.load(response)
 assert profile["email"] == email
+security_status = json.load(ui_json_request("/auth/security/step-up/status"))
+assert security_status == {"required": False, "verified": False, "methods": ["email"]}, security_status
 response = ui_json_request("/auth/profile", {"display_name": profile["display_name"]})
 assert response.status == 204, response.read()
 

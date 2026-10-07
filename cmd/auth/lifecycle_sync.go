@@ -121,6 +121,7 @@ func (a *app) applyDeletedState(ctx context.Context, userID uint64, requestedAt 
 	}
 	statements := []string{
 		`DELETE FROM sessions WHERE user_id=?`,
+		`DELETE FROM auth_security_codes WHERE user_id=?`,
 		`DELETE FROM auth_sessions WHERE user_id=?`,
 		`DELETE FROM auth_challenges WHERE user_id=?`,
 		`DELETE FROM auth_webauthn_sessions WHERE user_id=?`,
@@ -165,7 +166,7 @@ func (a *app) eraseDeletedUser(ctx context.Context, userID uint64) error {
 		return errUserNotDeleted
 	}
 	for _, table := range []string{
-		"auth_totp_setups", "auth_email_verifications", "auth_webauthn_sessions", "auth_challenges", "auth_sessions",
+		"auth_totp_setups", "auth_email_verifications", "auth_security_codes", "auth_security_totp_uses", "auth_webauthn_sessions", "auth_challenges", "auth_sessions",
 		"oauth_codes", "oauth_access_tokens", "oauth_refresh_tokens", "sessions", "blocks",
 		"recovery_codes", "totp_secrets", "passkeys",
 	} {
@@ -189,6 +190,8 @@ func (a *app) eraseDeletedUser(ctx context.Context, userID uint64) error {
 		"totp-activate:" + strconv.FormatUint(userID, 10),
 		"totp-disable:" + strconv.FormatUint(userID, 10),
 		"password-change:" + strconv.FormatUint(userID, 10),
+		"security-code:" + strconv.FormatUint(userID, 10),
+		"security-verify:" + strconv.FormatUint(userID, 10),
 	}
 	for _, key := range rateLimitKeys {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM auth_rate_limits WHERE key_hash=?`, digest(key)); err != nil {

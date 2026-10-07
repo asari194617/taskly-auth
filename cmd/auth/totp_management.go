@@ -71,9 +71,8 @@ func (a *app) totpSetup(w http.ResponseWriter, r *http.Request) {
 	if !a.requireUI(w, r) {
 		return
 	}
-	id, ok := a.recentSessionUser(r)
+	id, ok := a.securitySettingsUser(w, r)
 	if !ok {
-		oauthError(w, http.StatusUnauthorized, "login_required")
 		return
 	}
 	var input struct{}
@@ -116,9 +115,8 @@ func (a *app) totpActivate(w http.ResponseWriter, r *http.Request) {
 	if !a.requireUI(w, r) {
 		return
 	}
-	id, ok := a.recentSessionUser(r)
+	id, ok := a.securitySettingsUser(w, r)
 	if !ok {
-		oauthError(w, http.StatusUnauthorized, "login_required")
 		return
 	}
 	var input struct {
@@ -147,6 +145,11 @@ func (a *app) totpActivate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
+	var activeUser uint64
+	if err := tx.QueryRowContext(r.Context(), `SELECT id FROM users WHERE id=? AND is_deleted=0 FOR UPDATE`, id).Scan(&activeUser); err != nil {
+		a.totpStorageError(w)
+		return
+	}
 	var encrypted string
 	var expires time.Time
 	if err := tx.QueryRowContext(r.Context(), `SELECT encrypted_secret,expires_at FROM auth_totp_setups WHERE user_id=? FOR UPDATE`, id).Scan(&encrypted, &expires); err != nil || !time.Now().UTC().Before(expires) {
@@ -170,6 +173,14 @@ func (a *app) totpActivate(w http.ResponseWriter, r *http.Request) {
 		a.totpStorageError(w)
 		return
 	}
+	if _, err := tx.ExecContext(r.Context(), `UPDATE auth_sessions SET security_verified_at=NULL WHERE user_id=?`, id); err != nil {
+		a.totpStorageError(w)
+		return
+	}
+	if _, err := tx.ExecContext(r.Context(), `DELETE FROM auth_security_codes WHERE user_id=?`, id); err != nil {
+		a.totpStorageError(w)
+		return
+	}
 	if err := tx.Commit(); err != nil {
 		a.totpStorageError(w)
 		return
@@ -181,9 +192,8 @@ func (a *app) totpDisable(w http.ResponseWriter, r *http.Request) {
 	if !a.requireUI(w, r) {
 		return
 	}
-	id, ok := a.recentSessionUser(r)
+	id, ok := a.securitySettingsUser(w, r)
 	if !ok {
-		oauthError(w, http.StatusUnauthorized, "login_required")
 		return
 	}
 	var input struct {
@@ -212,6 +222,11 @@ func (a *app) totpDisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
+	var hasPassword, emailAllowed bool
+	if err := tx.QueryRowContext(r.Context(), `SELECT hashed_password IS NOT NULL AND hashed_password<>'',email_code_allowed FROM users WHERE id=? AND is_deleted=0 FOR UPDATE`, id).Scan(&hasPassword, &emailAllowed); err != nil {
+		a.totpStorageError(w)
+		return
+	}
 	var encrypted string
 	if err := tx.QueryRowContext(r.Context(), `SELECT secret FROM totp_secrets WHERE user_id=? AND is_active=1 FOR UPDATE`, id).Scan(&encrypted); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -230,11 +245,6 @@ func (a *app) totpDisable(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, http.StatusUnauthorized, "invalid_code")
 		return
 	}
-	var hasPassword, emailAllowed bool
-	if err := tx.QueryRowContext(r.Context(), `SELECT hashed_password IS NOT NULL AND hashed_password<>'',email_code_allowed FROM users WHERE id=? AND is_deleted=0 FOR UPDATE`, id).Scan(&hasPassword, &emailAllowed); err != nil {
-		a.totpStorageError(w)
-		return
-	}
 	var passkeys, recovery int
 	if err := tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM passkeys WHERE user_id=?`, id).Scan(&passkeys); err != nil {
 		a.totpStorageError(w)
@@ -249,6 +259,14 @@ func (a *app) totpDisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := tx.ExecContext(r.Context(), `UPDATE totp_secrets SET is_active=0 WHERE user_id=?`, id); err != nil || revokeOAuthCredentials(r.Context(), tx, id) != nil {
+		a.totpStorageError(w)
+		return
+	}
+	if _, err := tx.ExecContext(r.Context(), `UPDATE auth_sessions SET security_verified_at=NULL WHERE user_id=?`, id); err != nil {
+		a.totpStorageError(w)
+		return
+	}
+	if _, err := tx.ExecContext(r.Context(), `DELETE FROM auth_security_codes WHERE user_id=?`, id); err != nil {
 		a.totpStorageError(w)
 		return
 	}
