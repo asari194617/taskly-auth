@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"sort"
 	"strings"
 	"testing"
@@ -236,18 +237,18 @@ func TestLoginRequestEvidenceTrustAndSanitization(t *testing.T) {
 	r.Header.Set("X-Auth-Geo-Region", "Tokyo")
 	r.Header.Set("X-Auth-Geo-Country", "jp")
 	r.Header.Set("User-Agent", "ExampleBrowser/1.0")
-	ip, location, device, source := loginRequestEvidence(r, proxyToken)
+	ip, location, device, source := loginRequestEvidence(r, proxyToken, netip.MustParseAddr("172.18.0.1"))
 	if stringValue(ip) != "2001:db8::1" || location == nil || location.City != "Tokyo" || location.Country != "JP" || stringValue(device) != "ExampleBrowser/1.0" || stringValue(source) != "cloudflare" {
 		t.Fatalf("trusted proxy evidence: ip=%v location=%+v device=%v source=%v", ip, location, device, source)
 	}
 	r.RemoteAddr = "203.0.113.10:12345"
-	ip, location, _, source = loginRequestEvidence(r, proxyToken)
+	ip, location, _, source = loginRequestEvidence(r, proxyToken, netip.Addr{})
 	if stringValue(ip) != "203.0.113.10" || location != nil || stringValue(source) != "direct_socket" {
 		t.Fatalf("untrusted proxy headers were accepted: ip=%v location=%+v source=%v", ip, location, source)
 	}
 	r.RemoteAddr = "172.18.0.1:54321"
 	r.Header.Set("X-Auth-IP-Source", "origin_socket")
-	_, location, _, _ = loginRequestEvidence(r, proxyToken)
+	_, location, _, _ = loginRequestEvidence(r, proxyToken, netip.Addr{})
 	if location != nil {
 		t.Fatalf("direct-origin geolocation was trusted: %+v", location)
 	}
@@ -255,22 +256,91 @@ func TestLoginRequestEvidenceTrustAndSanitization(t *testing.T) {
 	r.Header.Set("X-Auth-Geo-Country", "XX")
 	r.Header.Del("X-Auth-Geo-City")
 	r.Header.Del("X-Auth-Geo-Region")
-	_, location, _, _ = loginRequestEvidence(r, proxyToken)
+	_, location, _, _ = loginRequestEvidence(r, proxyToken, netip.Addr{})
 	if location != nil {
 		t.Fatalf("unknown Cloudflare country was recorded: %+v", location)
 	}
 	r.Header.Set("X-Auth-Proxy-Token", "forged-token")
-	ip, location, _, source = loginRequestEvidence(r, proxyToken)
+	ip, location, _, source = loginRequestEvidence(r, proxyToken, netip.Addr{})
 	if ip != nil || location != nil || source != nil {
 		t.Fatalf("untrusted Docker peer headers were accepted: ip=%v location=%+v source=%v", ip, location, source)
 	}
 	r.Header.Set("X-Auth-Proxy-Token", proxyToken)
-	ip, location, _, source = loginRequestEvidence(r, "")
+	ip, location, _, source = loginRequestEvidence(r, "", netip.Addr{})
 	if ip != nil || location != nil || source != nil {
 		t.Fatalf("empty proxy token trusted headers: ip=%v location=%+v source=%v", ip, location, source)
 	}
 	if got := cleanHistoryText("abc\r\n=HYPERLINK(\"x\")", 100); got != "abc=HYPERLINK(\"x\")" {
 		t.Fatalf("history text sanitization = %q", got)
+	}
+}
+
+func TestLoginRequestEvidenceExistingNginxFallback(t *testing.T) {
+	trustedPeer := netip.MustParseAddr("172.18.0.1")
+	for _, test := range []struct {
+		name, peer, realIP, cfIP, forgedAuthIP, wantIP, wantSource string
+	}{
+		{"Cloudflare IPv4", "172.18.0.1:5000", "173.245.48.10", "203.0.113.10", "198.51.100.55", "203.0.113.10", "cloudflare"},
+		{"Cloudflare IPv6", "172.18.0.1:5000", "2606:4700::1", "2001:db8::10", "198.51.100.55", "2001:db8::10", "cloudflare"},
+		{"direct origin ignores forged CF and X-Auth", "172.18.0.1:5000", "198.51.100.8", "203.0.113.10", "198.51.100.55", "198.51.100.8", "nginx_remote_addr"},
+		{"invalid real IP", "172.18.0.1:5000", "garbage", "203.0.113.10", "198.51.100.55", "", ""},
+		{"missing Cloudflare visitor IP", "172.18.0.1:5000", "173.245.48.10", "", "198.51.100.55", "", ""},
+		{"invalid Cloudflare visitor IP", "172.18.0.1:5000", "173.245.48.10", "127.0.0.1", "198.51.100.55", "", ""},
+		{"sibling Docker container", "172.18.0.2:5000", "173.245.48.10", "203.0.113.10", "198.51.100.55", "", ""},
+		{"wrong configured gateway", "172.18.0.3:5000", "173.245.48.10", "203.0.113.10", "198.51.100.55", "", ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+			r.RemoteAddr = test.peer
+			r.Header.Set("X-Real-IP", test.realIP)
+			r.Header.Set("CF-Connecting-IP", test.cfIP)
+			r.Header.Set("X-Forwarded-For", "192.0.2.200")
+			r.Header.Set("X-Auth-Client-IP", test.forgedAuthIP)
+			r.Header.Set("X-Auth-IP-Source", "cloudflare")
+			r.Header.Set("X-Auth-Geo-City", "Fake City")
+			ip, location, _, source := loginRequestEvidence(r, "", trustedPeer)
+			if stringValue(ip) != test.wantIP || stringValue(source) != test.wantSource || location != nil {
+				t.Fatalf("fallback evidence: ip=%q source=%q location=%+v, want ip=%q source=%q", stringValue(ip), stringValue(source), location, test.wantIP, test.wantSource)
+			}
+		})
+	}
+	const proxyToken = "test-proxy-token-with-at-least-32-characters"
+	r := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+	r.RemoteAddr = "172.18.0.1:5000"
+	r.Header.Set("X-Auth-Proxy-Token", proxyToken)
+	r.Header.Set("X-Auth-Client-IP", "invalid")
+	r.Header.Set("X-Auth-IP-Source", "cloudflare")
+	r.Header.Set("X-Auth-Geo-City", "Spoofed")
+	r.Header.Set("X-Real-IP", "173.245.48.10")
+	r.Header.Set("CF-Connecting-IP", "203.0.113.10")
+	ip, location, _, source := loginRequestEvidence(r, proxyToken, trustedPeer)
+	if stringValue(ip) != "203.0.113.10" || stringValue(source) != "cloudflare" || location != nil {
+		t.Fatalf("invalid token-route evidence leaked location into fallback: ip=%q source=%q location=%+v", stringValue(ip), stringValue(source), location)
+	}
+}
+
+func TestHistoryTrustedProxyPeerValidationAndCloudflareRanges(t *testing.T) {
+	for _, value := range []string{"172.18.0.1/32", "8.8.8.8", "fe80::1%eth0", "not an IP"} {
+		if _, err := parseHistoryTrustedProxyPeer(value); err == nil {
+			t.Errorf("accepted invalid trusted peer %q", value)
+		}
+	}
+	if ip, err := parseHistoryTrustedProxyPeer("172.18.0.1"); err != nil || ip.String() != "172.18.0.1" {
+		t.Fatalf("valid Docker gateway rejected: ip=%v err=%v", ip, err)
+	}
+	if ip, err := parseHistoryTrustedProxyPeer(""); err != nil || ip.IsValid() {
+		t.Fatalf("empty trusted peer should disable fallback: ip=%v err=%v", ip, err)
+	}
+	for _, test := range []struct {
+		ip   string
+		want bool
+	}{
+		{"173.245.48.10", true}, {"2606:4700::1", true},
+		{"198.51.100.8", false}, {"2001:db8::8", false},
+	} {
+		if got := isCloudflareAddress(netip.MustParseAddr(test.ip)); got != test.want {
+			t.Errorf("isCloudflareAddress(%s)=%v, want %v", test.ip, got, test.want)
+		}
 	}
 }
 
@@ -305,6 +375,28 @@ func TestFinishLoginCommitsSessionAndEvidenceTogether(t *testing.T) {
 				t.Fatalf("unexpected history evidence: %+v", entry)
 			}
 		})
+	}
+}
+
+func TestFinishLoginPersistsExistingNginxFallback(t *testing.T) {
+	state := &historyTestConnector{}
+	a := &app{db: sql.OpenDB(state), alerts: &alerter{}, historyTrustedProxyPeer: netip.MustParseAddr("172.18.0.1")}
+	defer a.db.Close()
+	r := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+	r.RemoteAddr = "172.18.0.1:5000"
+	r.Header.Set("X-Real-IP", "173.245.48.10")
+	r.Header.Set("CF-Connecting-IP", "203.0.113.10")
+	r.Header.Set("X-Auth-Client-IP", "198.51.100.55")
+	r.Header.Set("X-Auth-Geo-City", "Spoofed")
+	r.Header.Set("User-Agent", "ExampleBrowser/1.0")
+	w := httptest.NewRecorder()
+	a.finishLogin(w, r, 7, "password")
+	if w.Code != http.StatusOK || len(state.history) != 1 {
+		t.Fatalf("fallback login failed: status=%d history=%d", w.Code, len(state.history))
+	}
+	entry := state.history[0].entry
+	if stringValue(entry.IPAddress) != "203.0.113.10" || stringValue(entry.IPSource) != "cloudflare" || entry.Location != nil || stringValue(entry.Device) != "ExampleBrowser/1.0" {
+		t.Fatalf("fallback persisted wrong evidence: %+v", entry)
 	}
 }
 

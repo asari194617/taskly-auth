@@ -269,7 +269,7 @@ func (a *app) finishLogin(w http.ResponseWriter, r *http.Request, id uint64, met
 	}
 	loggedInAt := time.Now().UTC()
 	expires := loggedInAt.Add(12 * time.Hour)
-	ip, location, device, ipSource := loginRequestEvidence(r, a.historyProxyToken)
+	ip, location, device, ipSource := loginRequestEvidence(r, a.historyProxyToken, a.historyTrustedProxyPeer)
 	var city, region, country any
 	if location != nil {
 		city, region, country = nilIfEmpty(location.City), nilIfEmpty(location.Region), nilIfEmpty(location.Country)

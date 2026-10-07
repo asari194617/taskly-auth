@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/netip"
 	"os"
 	"strings"
 	"time"
@@ -14,20 +15,21 @@ import (
 )
 
 type app struct {
-	db                     *sql.DB
-	issuer                 string
-	uiURL                  string
-	clientID               string
-	clientSecret           string
-	redirectURI            string
-	publicClients          map[string]string
-	secure                 bool
-	ready                  bool
-	alerts                 *alerter
-	webAuthn               *webauthn.WebAuthn
-	internalToken          string
-	securityStepUpRequired bool
-	historyProxyToken      string
+	db                      *sql.DB
+	issuer                  string
+	uiURL                   string
+	clientID                string
+	clientSecret            string
+	redirectURI             string
+	publicClients           map[string]string
+	secure                  bool
+	ready                   bool
+	alerts                  *alerter
+	webAuthn                *webauthn.WebAuthn
+	internalToken           string
+	securityStepUpRequired  bool
+	historyProxyToken       string
+	historyTrustedProxyPeer netip.Addr
 }
 
 func env(key, fallback string) string {
@@ -61,6 +63,11 @@ func main() {
 		alerts.sendSync("Taskly auth startup failed: security step-up gate invalid")
 		log.Fatal("AUTH_SECURITY_STEP_UP_REQUIRED must be 0 or 1")
 	}
+	historyTrustedProxyPeer, err := parseHistoryTrustedProxyPeer(os.Getenv("AUTH_HISTORY_TRUSTED_PROXY_PEER"))
+	if err != nil {
+		alerts.sendSync("Taskly auth startup failed: login history proxy peer invalid")
+		log.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	err = db.PingContext(ctx)
 	cancel()
@@ -69,16 +76,17 @@ func main() {
 		log.Fatal("auth DB unavailable")
 	}
 	a := &app{
-		db:                     db,
-		issuer:                 strings.TrimRight(env("AUTH_ISSUER", "http://localhost:3067"), "/"),
-		uiURL:                  strings.TrimRight(env("AUTH_UI_URL", "http://localhost:3068"), "/"),
-		clientID:               env("OAUTH_CLIENT_ID", "taskly-web"),
-		clientSecret:           os.Getenv("OAUTH_CLIENT_SECRET"),
-		redirectURI:            os.Getenv("OAUTH_REDIRECT_URI"),
-		alerts:                 alerts,
-		internalToken:          os.Getenv("AUTH_INTERNAL_TOKEN"),
-		securityStepUpRequired: stepUpSetting == "1",
-		historyProxyToken:      os.Getenv("AUTH_HISTORY_PROXY_TOKEN"),
+		db:                      db,
+		issuer:                  strings.TrimRight(env("AUTH_ISSUER", "http://localhost:3067"), "/"),
+		uiURL:                   strings.TrimRight(env("AUTH_UI_URL", "http://localhost:3068"), "/"),
+		clientID:                env("OAUTH_CLIENT_ID", "taskly-web"),
+		clientSecret:            os.Getenv("OAUTH_CLIENT_SECRET"),
+		redirectURI:             os.Getenv("OAUTH_REDIRECT_URI"),
+		alerts:                  alerts,
+		internalToken:           os.Getenv("AUTH_INTERNAL_TOKEN"),
+		securityStepUpRequired:  stepUpSetting == "1",
+		historyProxyToken:       os.Getenv("AUTH_HISTORY_PROXY_TOKEN"),
+		historyTrustedProxyPeer: historyTrustedProxyPeer,
 	}
 	a.publicClients, err = parsePublicClients(os.Getenv("OAUTH_PUBLIC_CLIENTS_JSON"), a.clientID)
 	if err != nil {
@@ -110,9 +118,9 @@ func main() {
 		alerts.sendSync("Taskly auth startup failed: internal API configuration invalid")
 		log.Fatal("AUTH_INTERNAL_TOKEN must contain at least 32 characters when migration is ready")
 	}
-	if env("NODE_ENV", "development") == "production" && len(a.historyProxyToken) < 32 {
+	if env("NODE_ENV", "development") == "production" && a.ready && len(a.historyProxyToken) < 32 && !a.historyTrustedProxyPeer.IsValid() {
 		alerts.sendSync("Taskly auth startup failed: login history proxy configuration invalid")
-		log.Fatal("AUTH_HISTORY_PROXY_TOKEN must contain at least 32 characters in production")
+		log.Fatal("AUTH_HISTORY_PROXY_TOKEN or AUTH_HISTORY_TRUSTED_PROXY_PEER is required when production auth is ready")
 	}
 	if err := a.ensureOAuthSchema(context.Background()); err != nil {
 		alerts.sendSync("Taskly auth startup failed: database schema unavailable")

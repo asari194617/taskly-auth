@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/subtle"
 	"encoding/csv"
+	"errors"
 	"log"
 	"net"
 	"net/http"
@@ -31,10 +32,47 @@ type loginHistoryEntry struct {
 	IPSource   *string        `json:"-"`
 }
 
-// The private reverse proxy overwrites X-Auth-* headers after checking the
-// Cloudflare ingress address. Direct requests have no location and use their
-// socket peer only when that peer is a public address.
-func loginRequestEvidence(r *http.Request, proxyToken string) (*string, *loginLocation, *string, *string) {
+// Kept from Cloudflare's published IPv4 and IPv6 lists. Refresh these ranges
+// regularly: a new edge range would be labeled nginx_remote_addr until then.
+// Never substitute an untrusted X-Forwarded-For value for the visitor IP.
+var cloudflareRanges = []netip.Prefix{
+	netip.MustParsePrefix("173.245.48.0/20"), netip.MustParsePrefix("103.21.244.0/22"),
+	netip.MustParsePrefix("103.22.200.0/22"), netip.MustParsePrefix("103.31.4.0/22"),
+	netip.MustParsePrefix("141.101.64.0/18"), netip.MustParsePrefix("108.162.192.0/18"),
+	netip.MustParsePrefix("190.93.240.0/20"), netip.MustParsePrefix("188.114.96.0/20"),
+	netip.MustParsePrefix("197.234.240.0/22"), netip.MustParsePrefix("198.41.128.0/17"),
+	netip.MustParsePrefix("162.158.0.0/15"), netip.MustParsePrefix("104.16.0.0/13"),
+	netip.MustParsePrefix("104.24.0.0/14"), netip.MustParsePrefix("172.64.0.0/13"),
+	netip.MustParsePrefix("131.0.72.0/22"), netip.MustParsePrefix("2400:cb00::/32"),
+	netip.MustParsePrefix("2606:4700::/32"), netip.MustParsePrefix("2803:f800::/32"),
+	netip.MustParsePrefix("2405:b500::/32"), netip.MustParsePrefix("2405:8100::/32"),
+	netip.MustParsePrefix("2a06:98c0::/29"), netip.MustParsePrefix("2c0f:f248::/32"),
+}
+
+func isCloudflareAddress(ip netip.Addr) bool {
+	for _, network := range cloudflareRanges {
+		if network.Contains(ip.Unmap()) {
+			return true
+		}
+	}
+	return false
+}
+
+func parseHistoryTrustedProxyPeer(value string) (netip.Addr, error) {
+	if value == "" {
+		return netip.Addr{}, nil
+	}
+	ip, err := netip.ParseAddr(value)
+	if err != nil || ip.Zone() != "" || !(ip.IsPrivate() || ip.IsLoopback()) {
+		return netip.Addr{}, errors.New("AUTH_HISTORY_TRUSTED_PROXY_PEER must be one private or loopback IP address")
+	}
+	return ip.Unmap(), nil
+}
+
+// A token-authenticated proxy may supply location. Without that token, the
+// existing Nginx vhost is trusted only when its exact Docker gateway is the
+// socket peer; Nginx overwrites X-Real-IP, and location is always unknown.
+func loginRequestEvidence(r *http.Request, proxyToken string, trustedPeer netip.Addr) (*string, *loginLocation, *string, *string) {
 	var ip, source *string
 	peer := r.RemoteAddr
 	if host, _, err := net.SplitHostPort(peer); err == nil {
@@ -43,7 +81,9 @@ func loginRequestEvidence(r *http.Request, proxyToken string) (*string, *loginLo
 	peerIP, peerErr := netip.ParseAddr(peer)
 	proxyPeer := peerErr == nil && (peerIP.IsLoopback() || peerIP.IsPrivate()) &&
 		len(proxyToken) >= 32 && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Auth-Proxy-Token")), []byte(proxyToken)) == 1
+	var tokenEvidenceUsed bool
 	if parsed, err := netip.ParseAddr(strings.TrimSpace(r.Header.Get("X-Auth-Client-IP"))); proxyPeer && err == nil && parsed.IsGlobalUnicast() && !parsed.IsPrivate() {
+		tokenEvidenceUsed = true
 		ipValue := parsed.Unmap().String()
 		ip = &ipValue
 		sourceValue := strings.TrimSpace(r.Header.Get("X-Auth-IP-Source"))
@@ -51,6 +91,27 @@ func loginRequestEvidence(r *http.Request, proxyToken string) (*string, *loginLo
 			sourceValue = "reverse_proxy_unspecified"
 		}
 		source = &sourceValue
+	} else if peerErr == nil && trustedPeer.IsValid() && peerIP.Unmap() == trustedPeer {
+		// The current Nginx vhost sets X-Real-IP to its socket peer, so a
+		// direct-origin request cannot substitute a value here. Do not read
+		// CF-Connecting-IP unless that peer is a published Cloudflare edge.
+		realIP, err := netip.ParseAddr(strings.TrimSpace(r.Header.Get("X-Real-IP")))
+		if err == nil && realIP.IsValid() && realIP.Zone() == "" && !realIP.IsUnspecified() && !realIP.IsMulticast() {
+			if isCloudflareAddress(realIP) {
+				visitorIP, err := netip.ParseAddr(strings.TrimSpace(r.Header.Get("CF-Connecting-IP")))
+				if err == nil && visitorIP.IsGlobalUnicast() && !visitorIP.IsPrivate() && visitorIP.Zone() == "" {
+					ipValue := visitorIP.Unmap().String()
+					ip = &ipValue
+					sourceValue := "cloudflare"
+					source = &sourceValue
+				}
+			} else {
+				ipValue := realIP.Unmap().String()
+				ip = &ipValue
+				sourceValue := "nginx_remote_addr"
+				source = &sourceValue
+			}
+		}
 	} else {
 		if peerErr == nil && peerIP.IsGlobalUnicast() && !peerIP.IsPrivate() {
 			ipValue := peerIP.Unmap().String()
@@ -60,7 +121,7 @@ func loginRequestEvidence(r *http.Request, proxyToken string) (*string, *loginLo
 		}
 	}
 	var location *loginLocation
-	if proxyPeer && ip != nil && source != nil && *source == "cloudflare" {
+	if tokenEvidenceUsed && ip != nil && source != nil && *source == "cloudflare" {
 		city := cleanHistoryText(r.Header.Get("X-Auth-Geo-City"), 128)
 		region := cleanHistoryText(r.Header.Get("X-Auth-Geo-Region"), 128)
 		country := strings.ToUpper(cleanHistoryText(r.Header.Get("X-Auth-Geo-Country"), 2))
