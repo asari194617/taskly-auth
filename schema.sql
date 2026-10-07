@@ -148,6 +148,14 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS auth_login_history (
+  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  user_id BIGINT UNSIGNED NOT NULL,
+  method VARCHAR(32) NOT NULL,
+  logged_in_at DATETIME NOT NULL,
+  INDEX idx_auth_login_history_user_recent (user_id, logged_in_at, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS auth_security_codes (
   session_hash CHAR(64) PRIMARY KEY,
   user_id BIGINT UNSIGNED NOT NULL,
