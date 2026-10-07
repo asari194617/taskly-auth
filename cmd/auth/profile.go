@@ -73,13 +73,19 @@ func (a *app) requestEmailVerification(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 429, "rate_limited")
 		return
 	}
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		oauthError(w, 503, "temporarily_unavailable")
+		return
+	}
+	defer tx.Rollback()
 	var email string
-	if err := a.db.QueryRowContext(r.Context(), `SELECT email FROM users WHERE id=? AND is_deleted=0`, id).Scan(&email); err != nil {
+	if err := tx.QueryRowContext(r.Context(), `SELECT email FROM users WHERE id=? AND is_deleted=0 FOR UPDATE`, id).Scan(&email); err != nil {
 		oauthError(w, 503, "profile_unavailable")
 		return
 	}
 	var verified bool
-	err = a.db.QueryRowContext(r.Context(), `SELECT verified_at IS NOT NULL FROM auth_email_verifications WHERE user_id=? AND email=?`, id, email).Scan(&verified)
+	err = tx.QueryRowContext(r.Context(), `SELECT verified_at IS NOT NULL FROM auth_email_verifications WHERE user_id=? AND email=?`, id, email).Scan(&verified)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		oauthError(w, 503, "temporarily_unavailable")
 		return
@@ -94,8 +100,12 @@ func (a *app) requestEmailVerification(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code := fmt.Sprintf("%06d", n.Int64())
-	_, err = a.db.ExecContext(r.Context(), `INSERT INTO auth_email_verifications (user_id,email,hashed_code,expires_at,failed_attempts,requested_at) VALUES (?,?,?,?,0,UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE email=VALUES(email),hashed_code=VALUES(hashed_code),expires_at=VALUES(expires_at),failed_attempts=0,verified_at=NULL,requested_at=UTC_TIMESTAMP()`, id, email, a.emailVerificationDigest(id, email, code), time.Now().UTC().Add(10*time.Minute))
+	_, err = tx.ExecContext(r.Context(), `INSERT INTO auth_email_verifications (user_id,email,hashed_code,expires_at,failed_attempts,requested_at) VALUES (?,?,?,?,0,UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE email=VALUES(email),hashed_code=VALUES(hashed_code),expires_at=VALUES(expires_at),failed_attempts=0,verified_at=NULL,requested_at=UTC_TIMESTAMP()`, id, email, a.emailVerificationDigest(id, email, code), time.Now().UTC().Add(10*time.Minute))
 	if err != nil {
+		oauthError(w, 503, "temporarily_unavailable")
+		return
+	}
+	if err := tx.Commit(); err != nil {
 		oauthError(w, 503, "temporarily_unavailable")
 		return
 	}
