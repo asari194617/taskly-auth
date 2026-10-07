@@ -232,12 +232,9 @@ func syncTasklyProfile(ctx context.Context, id uint64, name string) error {
 		}
 		return nil
 	}
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return errors.New("invalid profile sync URL")
-	}
-	if strings.EqualFold(os.Getenv("NODE_ENV"), "production") && parsed.Scheme != "https" && parsed.Hostname() != "taskly-server" {
-		return errors.New("profile sync URL must be private or HTTPS")
+	parsed, err := profileSyncURL(raw, strings.EqualFold(os.Getenv("NODE_ENV"), "production"))
+	if err != nil {
+		return err
 	}
 	token := os.Getenv("AUTH_INTERNAL_TOKEN")
 	if token == "" || (strings.EqualFold(os.Getenv("NODE_ENV"), "production") && len(token) < 32) {
@@ -260,4 +257,15 @@ func syncTasklyProfile(ctx context.Context, id uint64, name string) error {
 		return errors.New("profile sync rejected")
 	}
 	return nil
+}
+
+func profileSyncURL(raw string, production bool) (*url.URL, error) {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return nil, errors.New("invalid profile sync URL")
+	}
+	if production && parsed.Scheme != "https" && parsed.Hostname() != "taskly-server" && parsed.Hostname() != "server" {
+		return nil, errors.New("profile sync URL must be private or HTTPS")
+	}
+	return parsed, nil
 }

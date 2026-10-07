@@ -39,3 +39,15 @@ func TestProfileSyncRejectsUntrustedURL(t *testing.T) {
 		}
 	}
 }
+
+func TestProfileSyncURLAllowsProductionServiceAlias(t *testing.T) {
+	parsed, err := profileSyncURL("http://server:8080", true)
+	if err != nil || parsed.String() != "http://server:8080" {
+		t.Fatalf("production service URL: parsed=%v err=%v", parsed, err)
+	}
+	for _, raw := range []string{"http://server.example.com:8080", "http://127.0.0.1:8080", "http://server:8080/path"} {
+		if _, err := profileSyncURL(raw, true); err == nil {
+			t.Fatalf("accepted untrusted URL %q", raw)
+		}
+	}
+}
