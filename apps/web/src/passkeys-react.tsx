@@ -1,58 +1,96 @@
 import "./style.css";
 import "@charcoal-ui/react/dist/index.css";
-import { Button, CharcoalProvider } from "@charcoal-ui/react";
+import { Button, Modal, ModalAlign, ModalBody, ModalButtons, ModalHeader, TextField } from "@charcoal-ui/react";
 import { createRoot } from "react-dom/client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { request, json } from "./api";
-import { tasklyLoginURL } from "./config";
 import { decodeBase64url, encodeBase64url } from "./dom";
-import { AuthHeader } from "./auth-header";
+import { AccountLayout } from "./account-layout";
+import { SecurityStepUp, useSecurityStepUp } from "./security-step-up";
 
 interface PasskeySummary { id: number; device_name: string; created_at: string }
 interface PasskeyListPayload { passkeys: PasskeySummary[] }
 interface PasskeyRegisterPayload { request_id: string; options: { publicKey: PublicKeyCredentialCreationOptionsJSON } }
+type PasskeyDialog = { action: "register" } | { action: "rename" | "delete"; key: PasskeySummary };
+
+function registrationDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("ja-JP", { dateStyle: "medium", timeStyle: "short" }).format(date);
+}
 
 async function authenticatedRequest<T>(path: string, body?: unknown): Promise<T> {
   const response = await request(path, body);
-  if (response.status === 401) { location.assign("/login?next=passkeys"); throw new Error("login required"); }
   const payload = await json<T & { error?: string }>(response).catch(() => ({} as T & { error?: string }));
+  if (response.status === 401 && payload.error === "login_required") { location.assign("/login?next=passkeys"); throw new Error("login required"); }
   if (!response.ok) throw new Error(payload.error || "request failed");
   return payload;
 }
 
 function PasskeysApp() {
+  const stepUp = useSecurityStepUp("passkeys");
   const [keys, setKeys] = useState<PasskeySummary[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [dialog, setDialog] = useState<PasskeyDialog | null>(null);
+  const [draftName, setDraftName] = useState("");
+  const [dialogError, setDialogError] = useState("");
   async function loadKeys() {
     const result = await authenticatedRequest<PasskeyListPayload>("/auth/passkeys");
     setKeys(result.passkeys);
   }
   useEffect(() => { void loadKeys().catch(() => setError("パスキーを読み込めませんでした。")); }, []);
 
-  async function rename(key: PasskeySummary) {
-    const name = prompt("新しい名前", key.device_name);
-    if (name === null) return;
-    setBusy(true); setError("");
-    try { await authenticatedRequest("/auth/passkey/rename", { id:key.id, name }); await loadKeys(); }
-    catch { setError("名前を変更できませんでした。"); }
-    finally { setBusy(false); }
+  async function finishChange(message: string) {
+    setDialog(null); setNotice(message);
+    try { await loadKeys(); }
+    catch { setError("パスキー一覧を更新できませんでした。ページを再読み込みしてください。"); }
   }
-  async function remove(key: PasskeySummary) {
-    if (!confirm("このパスキーを削除しますか？")) return;
-    setBusy(true); setError("");
-    try { await authenticatedRequest("/auth/passkey/delete", { id:key.id }); await loadKeys(); }
-    catch { setError("削除できませんでした。最後のログイン手段は削除できません。"); }
-    finally { setBusy(false); }
+
+  function actionFailed(cause: unknown, fallback: string) {
+    if (cause instanceof Error && cause.message === "step_up_required") {
+      stepUp.invalidate();
+      setDialog(null);
+      setError("設定を変更する前に、もう一度本人確認をしてください。");
+      return;
+    }
+    setDialogError(fallback);
   }
-  async function register() {
-    setError(""); setNotice("");
-    if (!navigator.credentials?.create) { setError("このブラウザはパスキーに対応していません。"); return; }
-    const name = prompt("パスキーの名前", "Passkey");
-    if (name === null) return;
+
+  function openDialog(next: PasskeyDialog) {
+    if (!stepUp.canEdit || busy) return;
+    if (next.action === "register" && !navigator.credentials?.create) {
+      setError("このブラウザはパスキーに対応していません。");
+      return;
+    }
+    setError(""); setNotice(""); setDialogError("");
+    setDraftName(next.action === "register" ? "Passkey" : next.key.device_name);
+    setDialog(next);
+  }
+
+  function closeDialog() {
+    if (busy) return;
+    setDialog(null); setDialogError("");
+  }
+
+  async function saveName(event: FormEvent) {
+    event.preventDefault();
+    if (!dialog || dialog.action === "delete" || !stepUp.canEdit || busy) return;
+    const name = draftName.trim();
+    if (!name || Array.from(name).length > 64 || new TextEncoder().encode(name).length > 255) {
+      setDialogError("名前は1〜64文字、255バイト以内で入力してください。");
+      return;
+    }
+    const action = dialog;
+    setDialogError("");
     setBusy(true);
     try {
+      if (action.action === "rename") {
+        await authenticatedRequest("/auth/passkey/rename", { id: action.key.id, name });
+        await finishChange("パスキーの名前を変更しました。");
+        return;
+      }
       const begin = await authenticatedRequest<PasskeyRegisterPayload>("/auth/passkey/register/begin", {});
       const source = begin.options.publicKey;
       const publicKey = {
@@ -75,17 +113,54 @@ function PasskeysApp() {
           clientExtensionResults: credential.getClientExtensionResults(),
         },
       });
-      setNotice("パスキーを登録しました。"); await loadKeys();
-    } catch { setError("パスキーを登録できませんでした。再ログインしてからお試しください。"); }
+      await finishChange("パスキーを登録しました。");
+    } catch (cause) { actionFailed(cause, action.action === "rename" ? "名前を変更できませんでした。" : "パスキーを登録できませんでした。再ログインしてからお試しください。"); }
     finally { setBusy(false); }
   }
 
-  return <CharcoalProvider><main className="wide">
-    <AuthHeader />
-    <h1>パスキーを管理</h1><p className="message error" role="alert">{error}</p><p className="message" role="status">{notice}</p>
-    <ul className="key-list">{keys.length ? keys.map((key) => <li key={key.id}><span>{key.device_name} ({key.created_at})</span><div className="actions"><Button type="button" disabled={busy} onClick={() => void rename(key)}>名前を変更</Button><Button type="button" disabled={busy} onClick={() => void remove(key)}>削除</Button></div></li>) : <li>登録済みのパスキーはありません。</li>}</ul>
-    <Button type="button" variant="Primary" disabled={busy} onClick={() => void register()}>パスキーを登録</Button>
-    <nav><a href="/security">認証設定</a><a href="/profile">アカウント情報</a><a href={tasklyLoginURL}>Taskly に戻る</a></nav>
-  </main></CharcoalProvider>;
+  async function remove() {
+    if (dialog?.action !== "delete" || !stepUp.canEdit || busy) return;
+    setBusy(true); setDialogError("");
+    try {
+      await authenticatedRequest("/auth/passkey/delete", { id: dialog.key.id });
+      await finishChange("パスキーを削除しました。");
+    } catch (cause) { actionFailed(cause, "削除できませんでした。最後のログイン手段は削除できません。"); }
+    finally { setBusy(false); }
+  }
+
+  return <AccountLayout page="passkeys">
+    <h1>パスキー</h1>
+    <p className="account-intro">登録した端末やセキュリティキーを管理します。</p>
+    <p className="message error" role="alert">{error}</p><p className="message" role="status">{notice}</p>
+    <SecurityStepUp stepUp={stepUp} />
+    <div className="passkey-heading"><h2>登録済みのパスキー</h2><Button type="button" variant="Primary" disabled={busy || !stepUp.canEdit} onClick={() => openDialog({ action: "register" })}>パスキーを登録</Button></div>
+    {keys.length ? <ul className="passkey-cards">{keys.map((key) => <li className="passkey-card" key={key.id}>
+      <div className="passkey-details"><h3>{key.device_name}</h3><p>登録日時: {registrationDate(key.created_at)}</p></div>
+      <div className="passkey-actions">
+        <Button type="button" size="S" disabled={busy || !stepUp.canEdit} aria-label={`${key.device_name}の名前を変更`} onClick={() => openDialog({ action: "rename", key })}>名前を変更</Button>
+        <Button type="button" size="S" variant="Danger" disabled={busy || !stepUp.canEdit} aria-label={`${key.device_name}を削除`} onClick={() => openDialog({ action: "delete", key })}>削除</Button>
+      </div>
+    </li>)}</ul> : <p className="passkey-empty">登録済みのパスキーはありません。</p>}
+    {dialog && <Modal title={dialog.action === "register" ? "パスキーを登録" : dialog.action === "rename" ? "パスキーの名前を変更" : "パスキーを削除"} size="S" isOpen onClose={closeDialog} isDismissable={!busy} closeButtonAriaLabel="閉じる">
+      <ModalHeader />
+      <ModalBody>
+        {dialog.action === "delete" ? <>
+          <ModalAlign><p className="account-dialog-description">「{dialog.key.device_name}」を削除しますか？このパスキーではログインできなくなります。</p></ModalAlign>
+          {dialogError && <ModalAlign><p className="message error" role="alert">{dialogError}</p></ModalAlign>}
+          <ModalButtons>
+            <Button type="button" variant="Danger" fullWidth disabled={busy || !stepUp.canEdit} onClick={() => void remove()}>{busy ? "削除中…" : "削除する"}</Button>
+            <Button type="button" fullWidth disabled={busy} onClick={closeDialog}>キャンセル</Button>
+          </ModalButtons>
+        </> : <form className="passkey-dialog-form" onSubmit={(event) => void saveName(event)} aria-busy={busy}>
+          <ModalAlign><TextField id="passkey-name" label="パスキーの名前" showLabel required autoFocus assistiveText="64文字以内" value={draftName} onChange={setDraftName} disabled={busy} /></ModalAlign>
+          {dialogError && <ModalAlign><p className="message error" role="alert">{dialogError}</p></ModalAlign>}
+          <ModalButtons>
+            <Button type="submit" variant="Primary" fullWidth disabled={busy || !stepUp.canEdit}>{busy ? dialog.action === "register" ? "登録中…" : "保存中…" : dialog.action === "register" ? "登録する" : "保存する"}</Button>
+            <Button type="button" fullWidth disabled={busy} onClick={closeDialog}>キャンセル</Button>
+          </ModalButtons>
+        </form>}
+      </ModalBody>
+    </Modal>}
+  </AccountLayout>;
 }
 createRoot(document.getElementById("app")!).render(<PasskeysApp />);

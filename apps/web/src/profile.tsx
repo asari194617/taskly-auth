@@ -1,10 +1,10 @@
 import "./style.css";
 import "@charcoal-ui/react/dist/index.css";
-import { Button, CharcoalProvider, TextField } from "@charcoal-ui/react";
+import { Button, TextField } from "@charcoal-ui/react";
 import { createRoot } from "react-dom/client";
 import { useEffect, useState, type FormEvent } from "react";
 import { request } from "./api";
-import { AuthHeader } from "./auth-header";
+import { AccountLayout } from "./account-layout";
 
 interface Profile { email: string; display_name: string; email_verified: boolean }
 
@@ -61,17 +61,15 @@ function ProfileApp() {
     finally { setBusy(false); }
   }
 
-  return <CharcoalProvider><main>
-    <AuthHeader />
-    <p className="eyebrow">アカウント</p><h1>アカウント情報</h1>
+  return <AccountLayout page="profile">
+    <h1>アカウント情報</h1>
     <p className="message error" role="alert">{error}</p><p className="message" role="status">{message}</p>
     {profile && <>
       <section><h2>表示名</h2><form onSubmit={save}><TextField id="display-name" label="表示名" showLabel required value={name} onChange={setName} /><Button type="submit" variant="Primary" disabled={busy}>保存</Button></form></section>
-      <section><h2>メールアドレスの確認</h2><p className="account-email">{profile.email}</p><p>{profile.email_verified ? "確認済み" : "未確認"}</p>
+      <section><h2>メールアドレスの確認</h2><p className="account-email">{profile.email}</p>{profile.email_verified && <p>確認済み</p>}
         {!profile.email_verified && <><Button type="button" onClick={() => void sendCode()} disabled={busy}>{sent ? "コードを再送信" : "確認コードを送信"}</Button>{sent && <form onSubmit={confirm}><TextField id="verification-code" label="確認コード" showLabel required inputMode="numeric" pattern="[0-9]{6}" autoComplete="one-time-code" value={code} onChange={setCode} /><Button type="submit" variant="Primary" disabled={busy}>確認する</Button></form>}</>}
       </section>
     </>}
-    <nav><a href="/security">認証設定</a><a href="/passkeys">パスキー管理</a></nav>
-  </main></CharcoalProvider>;
+  </AccountLayout>;
 }
 createRoot(document.getElementById("app")!).render(<ProfileApp />);
