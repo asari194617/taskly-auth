@@ -1,7 +1,7 @@
 export interface LoginFlow {
   email: string;
   requestID: string;
-  next: "" | "passkeys" | "security" | "profile";
+  next: "" | "passkeys" | "security" | "profile" | "login-history";
   challenge: string;
 }
 
@@ -12,7 +12,7 @@ export function startFlow(search: string, storage: Storage): LoginFlow | null {
   const params = new URLSearchParams(search);
   const requestID = params.get("request_id") ?? "";
   const next = params.get("next");
-  const management = !requestID && (next === "passkeys" || next === "security" || next === "profile") ? next : "";
+  const management = !requestID && (next === "passkeys" || next === "security" || next === "profile" || next === "login-history") ? next : "";
   if (!requestID && !next) {
     const previous = loadFlow(storage);
     if (previous) {
@@ -32,7 +32,7 @@ export function loadFlow(storage: Storage): LoginFlow | null {
   try {
     const value = JSON.parse(storage.getItem(key) ?? "null") as LoginFlow | null;
     if (!value || typeof value.email !== "string" || typeof value.challenge !== "string" ||
-        typeof value.requestID !== "string" || !["", "passkeys", "security", "profile"].includes(value.next)) return null;
+        typeof value.requestID !== "string" || !["", "passkeys", "security", "profile", "login-history"].includes(value.next)) return null;
     if (!value.next && !requestIDPattern.test(value.requestID)) return null;
     return value;
   } catch {

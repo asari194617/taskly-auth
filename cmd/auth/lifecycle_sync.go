@@ -166,7 +166,7 @@ func (a *app) eraseDeletedUser(ctx context.Context, userID uint64) error {
 		return errUserNotDeleted
 	}
 	for _, table := range []string{
-		"auth_totp_setups", "auth_email_verifications", "auth_security_codes", "auth_security_totp_uses", "auth_webauthn_sessions", "auth_challenges", "auth_sessions",
+		"auth_totp_setups", "auth_email_verifications", "auth_security_codes", "auth_security_totp_uses", "auth_webauthn_sessions", "auth_challenges", "auth_sessions", "auth_login_history",
 		"oauth_codes", "oauth_access_tokens", "oauth_refresh_tokens", "sessions", "blocks",
 		"recovery_codes", "totp_secrets", "passkeys",
 	} {

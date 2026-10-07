@@ -123,6 +123,7 @@ func main() {
 	api.HandleFunc("POST /auth/login", a.login)
 	api.HandleFunc("POST /auth/logout", a.logout)
 	api.HandleFunc("GET /auth/profile", a.profile)
+	api.HandleFunc("GET /auth/login-history", a.loginHistory)
 	api.HandleFunc("POST /auth/profile", a.updateProfile)
 	api.HandleFunc("POST /auth/profile/email-verification/request", a.requestEmailVerification)
 	api.HandleFunc("POST /auth/profile/email-verification/confirm", a.confirmEmailVerification)

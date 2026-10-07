@@ -31,4 +31,5 @@ test("invalid OAuth request and unknown management target are rejected", () => {
   assert.equal(startFlow("?request_id=short", tab), null);
   assert.equal(startFlow("?next=https://example.com", tab), null);
   assert.equal(startFlow("?next=security", tab).next, "security");
+  assert.equal(startFlow("?next=login-history", tab).next, "login-history");
 });

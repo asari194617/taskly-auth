@@ -2,6 +2,7 @@
 """Exercise the local authorization-code, PKCE, rotation, and revocation flow."""
 
 import base64
+import datetime
 import hashlib
 import hmac
 import http.cookiejar
@@ -144,13 +145,24 @@ assert ui_json_request("/auth/recovery/generate", {}).status == 401
 assert ui_json_request("/auth/totp/status").status == 401
 assert ui_json_request("/auth/totp/setup", {}).status == 401
 assert ui_json_request("/auth/security/step-up/status").status == 401
+assert ui_json_request("/auth/login-history").status == 401
 
+login_started_at = time.time()
 body = json.dumps({"email": email, "password": password}).encode()
 response = opener.open(urllib.request.Request(
     api + "/auth/login", body,
     {"Content-Type": "application/json", "Origin": ui, "X-Auth-UI": "1"},
 ))
 assert response.status == 200, response.status
+
+response = ui_json_request("/auth/login-history")
+assert response.status == 200, response.read()
+history = json.load(response)["history"]
+assert history and history[0]["method"] == "password", history
+logged_in_at = datetime.datetime.fromisoformat(
+    history[0]["logged_in_at"].replace("Z", "+00:00")
+).timestamp()
+assert login_started_at - 5 <= logged_in_at <= time.time() + 5, history[0]
 
 response = ui_json_request("/auth/profile")
 assert response.status == 200, response.read()

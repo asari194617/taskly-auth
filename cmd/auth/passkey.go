@@ -209,5 +209,5 @@ func (a *app) passkeyFinish(w http.ResponseWriter, r *http.Request) {
 		a.alerts.send("Taskly auth passkey counter commit failed")
 		return
 	}
-	a.finishLogin(w, r, id)
+	a.finishLogin(w, r, id, "passkey")
 }

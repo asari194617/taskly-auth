@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -79,7 +80,7 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 			oauthError(w, 401, "invalid_credentials")
 			return
 		}
-		a.finishLogin(w, r, id)
+		a.finishLogin(w, r, id, "password_"+secondFactorMethod(input))
 		return
 	}
 	if hash.Valid && hash.String != "" {
@@ -117,14 +118,28 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, 202, map[string]any{"mfa_required": true, "auth_challenge": challenge, "expires_in": 300})
 			return
 		}
-		a.finishLogin(w, r, id)
+		a.finishLogin(w, r, id, "password")
 		return
 	}
 	if input.Password != "" || !a.verifySecondFactor(r, id, email, input, emailAllowed) {
 		oauthError(w, 401, "invalid_credentials")
 		return
 	}
-	a.finishLogin(w, r, id)
+	a.finishLogin(w, r, id, secondFactorMethod(input))
+}
+
+// Only call this after verifySecondFactor has accepted exactly one method.
+// The method recorded in history is derived from credentials verified by the
+// server, never from a client-provided history label.
+func secondFactorMethod(input loginInput) string {
+	switch {
+	case input.Code != "":
+		return "email_code"
+	case input.TOTP != "":
+		return "totp"
+	default:
+		return "recovery_code"
+	}
 }
 
 func (a *app) blocked(r *http.Request, id uint64) bool {
@@ -250,13 +265,14 @@ func (a *app) consumeEmailCode(r *http.Request, userID uint64, email, code strin
 	return tx.Commit() == nil
 }
 
-func (a *app) finishLogin(w http.ResponseWriter, r *http.Request, id uint64) {
+func (a *app) finishLogin(w http.ResponseWriter, r *http.Request, id uint64, method string) {
 	token, err := randomToken()
 	if err != nil {
 		oauthError(w, 500, "server_error")
 		return
 	}
-	expires := time.Now().UTC().Add(12 * time.Hour)
+	loggedInAt := time.Now().UTC()
+	expires := loggedInAt.Add(12 * time.Hour)
 	tx, err := a.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		oauthError(w, 500, "server_error")
@@ -273,7 +289,10 @@ func (a *app) finishLogin(w http.ResponseWriter, r *http.Request, id uint64) {
 		_, err = tx.ExecContext(r.Context(), `UPDATE users SET is_registered=1 WHERE id=?`, id)
 	}
 	if err == nil {
-		_, err = tx.ExecContext(r.Context(), `INSERT INTO auth_sessions (token_hash,user_id,expires_at,created_at) VALUES (?,?,?,?)`, digest(token), id, expires, time.Now().UTC())
+		_, err = tx.ExecContext(r.Context(), `INSERT INTO auth_sessions (token_hash,user_id,expires_at,created_at) VALUES (?,?,?,?)`, digest(token), id, expires, loggedInAt)
+	}
+	if err == nil {
+		_, err = tx.ExecContext(r.Context(), `INSERT INTO auth_login_history (user_id,method,logged_in_at) VALUES (?,?,?)`, id, method, loggedInAt)
 	}
 	if err == nil {
 		err = tx.Commit()
@@ -283,6 +302,11 @@ func (a *app) finishLogin(w http.ResponseWriter, r *http.Request, id uint64) {
 		a.alerts.send("Taskly auth session storage failed")
 		return
 	}
+	pruneContext, cancelPrune := context.WithTimeout(context.Background(), 2*time.Second)
+	if err := a.pruneLoginHistory(pruneContext, id); err != nil {
+		a.alerts.send("Taskly auth login history pruning failed")
+	}
+	cancelPrune()
 	http.SetCookie(w, &http.Cookie{Name: "taskly_auth_session", Value: token, Path: "/", Expires: expires, MaxAge: 12 * 3600, Secure: a.secure, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	jsonResponse(w, 200, map[string]bool{"authenticated": true})
 }

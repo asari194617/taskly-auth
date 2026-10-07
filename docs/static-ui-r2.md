@@ -43,7 +43,9 @@ R2 では要求パスと同じオブジェクトキーを返せるよう、ビ�
 | `/password` | `password` | パスワード入力・別の認証方法の選択 |
 | `/mail-code` | `mail-code` | メールコード入力 |
 | `/mfa` | `mfa` | パスワード後の2段階認証 |
+| `/profile` | `profile` | 表示名とメールアドレス |
 | `/security` | `security` | パスワード、メールコード、復旧コード、TOTP、パスキー管理（`?section=passkeys` を含む） |
+| `/login-history` | `login-history` | ログイン履歴 |
 | `/passkeys` | `passkeys` | 旧リンクから `/security?section=passkeys` への互換転送 |
 | `/logout` | `logout` | 認証サービスのセッション失効 |
 | `/assets/*` | `assets/*` | ハッシュ付き JavaScript と CSS |
