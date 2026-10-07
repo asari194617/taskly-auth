@@ -8,7 +8,7 @@ Status: implemented behind migration gate; production device verification pendin
 
 ## 操作と認可
 
-- `GET /passkeys` は管理画面。認証 API の有効な `taskly_auth_session` がなければ、`/login?next=passkeys` からログインし直す。`next` に受け付ける値は `passkeys` のみで、任意 URL への遷移はしない。
+- 管理画面は認証設定内の `GET /security?section=passkeys`。既存の `GET /passkeys` とログインフローの `next=passkeys` はこの画面へ転送する。認証 API の有効な `taskly_auth_session` がなければ、管理画面からログインし直す。任意 URL への遷移は許可しない。
 - `GET /auth/passkeys` はログイン済みの本人の ID・表示名・作成日時だけを返す。公開鍵・署名カウンタは返さない。
 - `POST /auth/passkey/register/begin` は本人の既存クレデンシャルを exclude list に含む登録オプションと5分の一回限りの要求 ID を返す。
 - `POST /auth/passkey/register/finish` は要求 ID とブラウザの attestation を検証し、同一ユーザーの新規行として保存する。要求 ID は成功・失敗を問わず一度だけ使える。
