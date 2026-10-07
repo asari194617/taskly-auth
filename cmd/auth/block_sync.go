@@ -96,6 +96,7 @@ func (a *app) applyBlockState(ctx context.Context, userID uint64, active bool, r
 			return err
 		}
 		statements := []string{
+			`DELETE FROM auth_security_codes WHERE user_id=?`,
 			`DELETE FROM auth_sessions WHERE user_id=?`,
 			`DELETE FROM auth_challenges WHERE user_id=?`,
 			`DELETE FROM auth_webauthn_sessions WHERE user_id=?`,

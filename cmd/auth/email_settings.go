@@ -31,9 +31,8 @@ func (a *app) updateEmailCodeSettings(w http.ResponseWriter, r *http.Request) {
 	if !a.requireUI(w, r) {
 		return
 	}
-	id, ok := a.recentSessionUser(r)
+	id, ok := a.securitySettingsUser(w, r)
 	if !ok {
-		oauthError(w, 401, "login_required")
 		return
 	}
 	var input struct {
@@ -66,6 +65,9 @@ func (a *app) updateEmailCodeSettings(w http.ResponseWriter, r *http.Request) {
 	var current bool
 	if err := tx.QueryRowContext(r.Context(), `SELECT hashed_password,email,email_code_allowed FROM users WHERE id=? AND is_deleted=0 FOR UPDATE`, id).Scan(&hash, &email, &current); err != nil {
 		a.emailSettingsStorageError(w)
+		return
+	}
+	if !a.securitySettingsGrantInTx(w, r, tx, id) {
 		return
 	}
 	if current == *input.Enabled {

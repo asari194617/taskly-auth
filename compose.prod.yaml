@@ -8,6 +8,7 @@ services:
       AUTH_ADDR: 0.0.0.0:3067
       NODE_ENV: production
       AUTH_MIGRATION_READY: ${AUTH_MIGRATION_READY:-0}
+      AUTH_SECURITY_STEP_UP_REQUIRED: ${AUTH_SECURITY_STEP_UP_REQUIRED:-0}
     networks:
       - taskly
     ports:

@@ -28,9 +28,8 @@ func (a *app) generateRecoveryCodes(w http.ResponseWriter, r *http.Request) {
 	if !a.requireUI(w, r) {
 		return
 	}
-	id, ok := a.recentSessionUser(r)
+	id, ok := a.securitySettingsUser(w, r)
 	if !ok {
-		oauthError(w, 401, "login_required")
 		return
 	}
 	var input struct{}
@@ -63,6 +62,9 @@ func (a *app) generateRecoveryCodes(w http.ResponseWriter, r *http.Request) {
 	var active bool
 	if err := tx.QueryRowContext(r.Context(), `SELECT is_deleted=0 FROM users WHERE id=? FOR UPDATE`, id).Scan(&active); err != nil || !active {
 		a.recoveryStorageError(w)
+		return
+	}
+	if !a.securitySettingsGrantInTx(w, r, tx, id) {
 		return
 	}
 	if _, err := tx.ExecContext(r.Context(), `DELETE FROM recovery_codes WHERE user_id=? AND is_used=0`, id); err != nil {

@@ -292,6 +292,10 @@ func (a *app) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if cookie, err := r.Cookie("taskly_auth_session"); err == nil {
+		if _, err := a.db.ExecContext(r.Context(), `DELETE FROM auth_security_codes WHERE session_hash=?`, digest(cookie.Value)); err != nil {
+			oauthError(w, http.StatusServiceUnavailable, "temporarily_unavailable")
+			return
+		}
 		if _, err := a.db.ExecContext(r.Context(), `DELETE FROM auth_sessions WHERE token_hash=?`, digest(cookie.Value)); err != nil {
 			oauthError(w, http.StatusServiceUnavailable, "temporarily_unavailable")
 			return
@@ -368,7 +372,7 @@ func sendMailCode(email, code, purpose string) error {
 	if user := env("SMTP_USER", ""); user != "" {
 		auth = smtp.PlainAuth("", user, env("SMTP_PASSWORD", ""), host)
 	}
-	if purpose != "authentication" && purpose != "email verification" {
+	if purpose != "authentication" && purpose != "email verification" && purpose != "security verification" {
 		return errors.New("invalid email purpose")
 	}
 	message := []byte("From: " + from + "\r\nTo: " + email + "\r\nSubject: Taskly " + purpose + " code\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\nYour Taskly " + purpose + " code is " + code + ". It expires in 10 minutes.\r\n")

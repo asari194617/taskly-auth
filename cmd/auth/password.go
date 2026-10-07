@@ -41,9 +41,8 @@ func (a *app) changePassword(w http.ResponseWriter, r *http.Request) {
 	if !a.requireUI(w, r) {
 		return
 	}
-	id, ok := a.recentSessionUser(r)
+	id, ok := a.securitySettingsUser(w, r)
 	if !ok {
-		oauthError(w, 401, "login_required")
 		return
 	}
 	var input passwordInput
@@ -74,6 +73,9 @@ func (a *app) changePassword(w http.ResponseWriter, r *http.Request) {
 		a.passwordStorageError(w)
 		return
 	}
+	if !a.securitySettingsGrantInTx(w, r, tx, id) {
+		return
+	}
 	if old.Valid && old.String != "" && bcrypt.CompareHashAndPassword([]byte(old.String), []byte(input.Current)) != nil {
 		oauthError(w, 401, "invalid_credentials")
 		return
@@ -85,6 +87,7 @@ func (a *app) changePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	queries := []string{
 		`UPDATE users SET hashed_password=? WHERE id=?`,
+		`DELETE FROM auth_security_codes WHERE user_id=?`,
 		`DELETE FROM auth_sessions WHERE user_id=?`,
 		`UPDATE oauth_codes SET used_at=UTC_TIMESTAMP() WHERE user_id=? AND used_at IS NULL`,
 		`UPDATE oauth_access_tokens SET revoked_at=UTC_TIMESTAMP() WHERE user_id=? AND revoked_at IS NULL`,

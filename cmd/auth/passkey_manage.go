@@ -29,7 +29,7 @@ func (a *app) passkeyAccount(w http.ResponseWriter, r *http.Request, recent bool
 	var id uint64
 	var ok bool
 	if recent {
-		id, ok = a.recentSessionUser(r)
+		return a.securitySettingsUser(w, r)
 	} else {
 		id, ok = a.sessionUser(r)
 	}
@@ -139,6 +139,9 @@ func (a *app) passkeyRegisterFinish(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 401, "invalid_credentials")
 		return
 	}
+	if !a.securitySettingsGrantInTx(w, r, tx, id) {
+		return
+	}
 	credential, err := a.webAuthn.FinishRegistration(user, data, request)
 	if err != nil {
 		oauthError(w, 401, "invalid_credentials")
@@ -175,7 +178,21 @@ func (a *app) passkeyRename(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 400, "invalid_request")
 		return
 	}
-	result, err := a.db.ExecContext(r.Context(), `UPDATE passkeys SET device_name=? WHERE id=? AND user_id=?`, name, input.ID, id)
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		oauthError(w, 503, "temporarily_unavailable")
+		return
+	}
+	defer tx.Rollback()
+	var activeUser uint64
+	if err := tx.QueryRowContext(r.Context(), `SELECT id FROM users WHERE id=? AND is_deleted=0 FOR UPDATE`, id).Scan(&activeUser); err != nil {
+		oauthError(w, 401, "login_required")
+		return
+	}
+	if !a.securitySettingsGrantInTx(w, r, tx, id) {
+		return
+	}
+	result, err := tx.ExecContext(r.Context(), `UPDATE passkeys SET device_name=? WHERE id=? AND user_id=?`, name, input.ID, id)
 	if err != nil {
 		oauthError(w, 503, "temporarily_unavailable")
 		return
@@ -187,13 +204,17 @@ func (a *app) passkeyRename(w http.ResponseWriter, r *http.Request) {
 	}
 	if changed == 0 {
 		var exists int
-		if err := a.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM passkeys WHERE id=? AND user_id=?`, input.ID, id).Scan(&exists); err != nil {
+		if err := tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM passkeys WHERE id=? AND user_id=?`, input.ID, id).Scan(&exists); err != nil {
 			oauthError(w, 503, "temporarily_unavailable")
 			return
 		} else if exists == 0 {
 			oauthError(w, 404, "not_found")
 			return
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		oauthError(w, 503, "temporarily_unavailable")
+		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -223,6 +244,9 @@ func (a *app) passkeyDelete(w http.ResponseWriter, r *http.Request) {
 	var emailAllowed bool
 	if err := tx.QueryRowContext(r.Context(), `SELECT hashed_password,email_code_allowed FROM users WHERE id=? AND is_deleted=0 FOR UPDATE`, id).Scan(&hash, &emailAllowed); err != nil {
 		oauthError(w, 401, "login_required")
+		return
+	}
+	if !a.securitySettingsGrantInTx(w, r, tx, id) {
 		return
 	}
 	rows, err := tx.QueryContext(r.Context(), `SELECT id FROM passkeys WHERE user_id=? FOR UPDATE`, id)

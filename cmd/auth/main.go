@@ -14,18 +14,19 @@ import (
 )
 
 type app struct {
-	db            *sql.DB
-	issuer        string
-	uiURL         string
-	clientID      string
-	clientSecret  string
-	redirectURI   string
-	publicClients map[string]string
-	secure        bool
-	ready         bool
-	alerts        *alerter
-	webAuthn      *webauthn.WebAuthn
-	internalToken string
+	db                     *sql.DB
+	issuer                 string
+	uiURL                  string
+	clientID               string
+	clientSecret           string
+	redirectURI            string
+	publicClients          map[string]string
+	secure                 bool
+	ready                  bool
+	alerts                 *alerter
+	webAuthn               *webauthn.WebAuthn
+	internalToken          string
+	securityStepUpRequired bool
 }
 
 func env(key, fallback string) string {
@@ -54,6 +55,11 @@ func main() {
 	defer db.Close()
 	db.SetMaxOpenConns(20)
 	db.SetConnMaxLifetime(30 * time.Minute)
+	stepUpSetting := env("AUTH_SECURITY_STEP_UP_REQUIRED", "0")
+	if stepUpSetting != "0" && stepUpSetting != "1" {
+		alerts.sendSync("Taskly auth startup failed: security step-up gate invalid")
+		log.Fatal("AUTH_SECURITY_STEP_UP_REQUIRED must be 0 or 1")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	err = db.PingContext(ctx)
 	cancel()
@@ -62,14 +68,15 @@ func main() {
 		log.Fatal("auth DB unavailable")
 	}
 	a := &app{
-		db:            db,
-		issuer:        strings.TrimRight(env("AUTH_ISSUER", "http://localhost:3067"), "/"),
-		uiURL:         strings.TrimRight(env("AUTH_UI_URL", "http://localhost:3068"), "/"),
-		clientID:      env("OAUTH_CLIENT_ID", "taskly-web"),
-		clientSecret:  os.Getenv("OAUTH_CLIENT_SECRET"),
-		redirectURI:   os.Getenv("OAUTH_REDIRECT_URI"),
-		alerts:        alerts,
-		internalToken: os.Getenv("AUTH_INTERNAL_TOKEN"),
+		db:                     db,
+		issuer:                 strings.TrimRight(env("AUTH_ISSUER", "http://localhost:3067"), "/"),
+		uiURL:                  strings.TrimRight(env("AUTH_UI_URL", "http://localhost:3068"), "/"),
+		clientID:               env("OAUTH_CLIENT_ID", "taskly-web"),
+		clientSecret:           os.Getenv("OAUTH_CLIENT_SECRET"),
+		redirectURI:            os.Getenv("OAUTH_REDIRECT_URI"),
+		alerts:                 alerts,
+		internalToken:          os.Getenv("AUTH_INTERNAL_TOKEN"),
+		securityStepUpRequired: stepUpSetting == "1",
 	}
 	a.publicClients, err = parsePublicClients(os.Getenv("OAUTH_PUBLIC_CLIENTS_JSON"), a.clientID)
 	if err != nil {
@@ -119,6 +126,9 @@ func main() {
 	api.HandleFunc("POST /auth/profile", a.updateProfile)
 	api.HandleFunc("POST /auth/profile/email-verification/request", a.requestEmailVerification)
 	api.HandleFunc("POST /auth/profile/email-verification/confirm", a.confirmEmailVerification)
+	api.HandleFunc("GET /auth/security/step-up/status", a.securityStepUpStatus)
+	api.HandleFunc("POST /auth/security/step-up/request-code", a.requestSecurityStepUpCode)
+	api.HandleFunc("POST /auth/security/step-up/verify", a.verifySecurityStepUp)
 	api.HandleFunc("GET /auth/password/status", a.passwordStatus)
 	api.HandleFunc("POST /auth/password", a.changePassword)
 	api.HandleFunc("GET /auth/email-code/settings", a.emailCodeSettings)

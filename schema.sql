@@ -144,7 +144,27 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
   token_hash CHAR(64) PRIMARY KEY,
   user_id BIGINT UNSIGNED NOT NULL,
   expires_at DATETIME NOT NULL,
+  security_verified_at DATETIME,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS auth_security_codes (
+  session_hash CHAR(64) PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  email VARCHAR(255) NOT NULL,
+  hashed_code CHAR(64) NOT NULL,
+  expires_at DATETIME NOT NULL,
+  failed_attempts INT NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_auth_security_codes_user (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS auth_security_totp_uses (
+  user_id BIGINT UNSIGNED NOT NULL,
+  code_hash CHAR(64) NOT NULL,
+  expires_at DATETIME NOT NULL,
+  PRIMARY KEY (user_id, code_hash),
+  INDEX idx_auth_security_totp_uses_expires (expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS auth_challenges (
