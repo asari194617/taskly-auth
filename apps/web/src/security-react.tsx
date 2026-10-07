@@ -189,7 +189,7 @@ function SecurityApp() {
       {passwordChanged ? <a href="/login?next=security">ログインし直す</a> : <form onSubmit={changePassword}>{passwordStatus.has_password && <TextField id="current" label="現在のパスワード" showLabel type="password" autoComplete="current-password" value={currentPassword} onChange={setCurrentPassword} />}<TextField id="next" label="新しいパスワード（8文字以上）" showLabel type="password" required minLength={8} autoComplete="new-password" value={nextPassword} onChange={setNextPassword} /><Button type="submit" variant="Primary" disabled={busy}><BusyLabel busy={busy}>更新する</BusyLabel></Button></form>}
     </section>}
     {section === "passkeys" && <PasskeysSection stepUp={stepUp} />}
-    {showRecoveryConfirm && <Modal title="復旧コードを再発行" size="S" isOpen onClose={() => setShowRecoveryConfirm(false)} isDismissable closeButtonAriaLabel="閉じる">
+    {showRecoveryConfirm && <Modal title="復旧コードを再発行" size="S" bottomSheet isOpen onClose={() => setShowRecoveryConfirm(false)} isDismissable closeButtonAriaLabel="閉じる">
       <ModalHeader />
       <ModalBody>
         <ModalAlign><p className="account-dialog-description">再発行すると、以前の未使用コードは使えなくなります。新しいコードを安全な場所に保存してください。</p></ModalAlign>

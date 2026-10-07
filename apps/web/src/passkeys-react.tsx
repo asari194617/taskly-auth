@@ -142,7 +142,7 @@ export function PasskeysSection({ stepUp }: { stepUp: ReturnType<typeof useSecur
         <Button type="button" size="S" variant="Danger" disabled={busy || !stepUp.canEdit} aria-label={`${key.device_name}を削除`} onClick={() => openDialog({ action: "delete", key })}>削除</Button>
       </div>
     </li>)}</ul> : <p className="passkey-empty">登録済みのパスキーはありません。</p>}
-    {dialog && <Modal title={dialog.action === "register" ? "パスキーを登録" : dialog.action === "rename" ? "パスキーの名前を変更" : "パスキーを削除"} size="S" isOpen onClose={closeDialog} isDismissable={!busy} closeButtonAriaLabel="閉じる">
+    {dialog && <Modal title={dialog.action === "register" ? "パスキーを登録" : dialog.action === "rename" ? "パスキーの名前を変更" : "パスキーを削除"} size="S" bottomSheet isOpen onClose={closeDialog} isDismissable={!busy} closeButtonAriaLabel="閉じる">
       <ModalHeader />
       <ModalBody>
         {dialog.action === "delete" ? <>
