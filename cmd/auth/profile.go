@@ -79,8 +79,8 @@ func (a *app) requestEmailVerification(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-	var email string
-	if err := tx.QueryRowContext(r.Context(), `SELECT email FROM users WHERE id=? AND is_deleted=0 FOR UPDATE`, id).Scan(&email); err != nil {
+	var email, locale string
+	if err := tx.QueryRowContext(r.Context(), `SELECT email,notification_lang FROM users WHERE id=? AND is_deleted=0 FOR UPDATE`, id).Scan(&email, &locale); err != nil {
 		oauthError(w, 503, "profile_unavailable")
 		return
 	}
@@ -109,7 +109,7 @@ func (a *app) requestEmailVerification(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 503, "temporarily_unavailable")
 		return
 	}
-	if err := sendMailCode(email, code, "email verification"); err != nil {
+	if err := sendMailCode(r.Context(), email, code, emailVerificationCodePurpose, locale); err != nil {
 		a.alerts.send("Taskly auth verification email delivery failed")
 		oauthError(w, 503, "temporarily_unavailable")
 		return

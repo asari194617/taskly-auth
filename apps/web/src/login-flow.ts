@@ -2,11 +2,30 @@ export interface LoginFlow {
   email: string;
   requestID: string;
   next: "" | "passkeys" | "security" | "profile" | "login-history";
+  nextSection: SecurityDetailSection | "";
   challenge: string;
 }
 
 const key = "taskly-auth-login-flow";
 const requestIDPattern = /^[A-Za-z0-9._~-]{43,128}$/;
+export const securityDetailSections = ["email", "totp", "recovery", "password", "passkeys"] as const;
+export type SecurityDetailSection = typeof securityDetailSections[number];
+
+export function securityDetailSection(value: string | null): SecurityDetailSection | null {
+  return securityDetailSections.find((section) => section === value) ?? null;
+}
+
+export function securityDetailURL(section: SecurityDetailSection | null): string {
+  return section ? `/security?section=${section}` : "/security";
+}
+
+export function securityLoginURL(section: SecurityDetailSection | null): string {
+  return `/login?next=security${section ? `&section=${section}` : ""}`;
+}
+
+export function securityMfaURL(section: SecurityDetailSection): string {
+  return `/mfa?purpose=security&section=${section}`;
+}
 
 export function startFlow(search: string, storage: Storage): LoginFlow | null {
   const params = new URLSearchParams(search);
@@ -23,7 +42,11 @@ export function startFlow(search: string, storage: Storage): LoginFlow | null {
   }
   storage.removeItem(key);
   if (!management && !requestIDPattern.test(requestID)) return null;
-  const flow: LoginFlow = { email: "", requestID, next: management, challenge: "" };
+  const flow: LoginFlow = {
+    email: "", requestID, next: management,
+    nextSection: management === "security" ? securityDetailSection(params.get("section")) ?? "" : "",
+    challenge: "",
+  };
   saveFlow(flow, storage);
   return flow;
 }
@@ -34,7 +57,9 @@ export function loadFlow(storage: Storage): LoginFlow | null {
     if (!value || typeof value.email !== "string" || typeof value.challenge !== "string" ||
         typeof value.requestID !== "string" || !["", "passkeys", "security", "profile", "login-history"].includes(value.next)) return null;
     if (!value.next && !requestIDPattern.test(value.requestID)) return null;
-    return value;
+    const nextSection = value.nextSection ?? "";
+    if (nextSection !== "" && (value.next !== "security" || !securityDetailSection(nextSection))) return null;
+    return { ...value, nextSection };
   } catch {
     return null;
   }

@@ -1,47 +1,162 @@
 package main
 
 import (
-	"context"
-	"database/sql"
+	"encoding/csv"
 	"errors"
+	"log"
+	"net"
 	"net/http"
+	"net/netip"
+	"strconv"
+	"strings"
 	"time"
+	"unicode"
 )
 
-const loginHistoryLimit = 50
+const loginHistoryPageSize = 50
+
+type loginLocation struct {
+	City    string `json:"city"`
+	Region  string `json:"region"`
+	Country string `json:"country"`
+}
 
 type loginHistoryEntry struct {
-	ID         uint64    `json:"-"`
-	Method     string    `json:"method"`
-	LoggedInAt time.Time `json:"logged_in_at"`
+	ID          uint64         `json:"-"`
+	Method      string         `json:"method"`
+	LoggedInAt  time.Time      `json:"logged_in_at"`
+	IPAddress   *string        `json:"ip_address"`
+	Location    *loginLocation `json:"location"`
+	Device      *string        `json:"device"`
+	IPSource    *string        `json:"-"`
+	GeoSource   *string        `json:"-"`
+	GeoRelease  *string        `json:"-"`
+	GeoDBSHA256 *string        `json:"-"`
 }
 
-// Keep the newest 50 entries per user. Pruning runs after session issuance so
-// a transient maintenance failure cannot reject an otherwise valid login.
-func (a *app) pruneLoginHistory(ctx context.Context, userID uint64) error {
-	var cutoffTime time.Time
-	var cutoffID uint64
-	err := a.db.QueryRowContext(ctx, `SELECT logged_in_at,id FROM auth_login_history WHERE user_id=? ORDER BY logged_in_at DESC,id DESC LIMIT 1 OFFSET ?`, userID, loginHistoryLimit).Scan(&cutoffTime, &cutoffID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	_, err = a.db.ExecContext(ctx, `DELETE FROM auth_login_history WHERE user_id=? AND (logged_in_at<? OR (logged_in_at=? AND id<=?))`, userID, cutoffTime, cutoffTime, cutoffID)
-	return err
+// Kept from Cloudflare's published IPv4 and IPv6 lists. Refresh these ranges
+// regularly: a new edge range would be labeled nginx_remote_addr until then.
+// Never substitute an untrusted X-Forwarded-For value for the visitor IP.
+var cloudflareRanges = []netip.Prefix{
+	netip.MustParsePrefix("173.245.48.0/20"), netip.MustParsePrefix("103.21.244.0/22"),
+	netip.MustParsePrefix("103.22.200.0/22"), netip.MustParsePrefix("103.31.4.0/22"),
+	netip.MustParsePrefix("141.101.64.0/18"), netip.MustParsePrefix("108.162.192.0/18"),
+	netip.MustParsePrefix("190.93.240.0/20"), netip.MustParsePrefix("188.114.96.0/20"),
+	netip.MustParsePrefix("197.234.240.0/22"), netip.MustParsePrefix("198.41.128.0/17"),
+	netip.MustParsePrefix("162.158.0.0/15"), netip.MustParsePrefix("104.16.0.0/13"),
+	netip.MustParsePrefix("104.24.0.0/14"), netip.MustParsePrefix("172.64.0.0/13"),
+	netip.MustParsePrefix("131.0.72.0/22"), netip.MustParsePrefix("2400:cb00::/32"),
+	netip.MustParsePrefix("2606:4700::/32"), netip.MustParsePrefix("2803:f800::/32"),
+	netip.MustParsePrefix("2405:b500::/32"), netip.MustParsePrefix("2405:8100::/32"),
+	netip.MustParsePrefix("2a06:98c0::/29"), netip.MustParsePrefix("2c0f:f248::/32"),
 }
 
-func (a *app) loginHistory(w http.ResponseWriter, r *http.Request) {
+var cloudflarePseudoIPv4Range = netip.MustParsePrefix("240.0.0.0/4")
+
+func isCloudflarePseudoIPv4(ip netip.Addr) bool {
+	return cloudflarePseudoIPv4Range.Contains(ip.Unmap())
+}
+
+func isCloudflareAddress(ip netip.Addr) bool {
+	for _, network := range cloudflareRanges {
+		if network.Contains(ip.Unmap()) {
+			return true
+		}
+	}
+	return false
+}
+
+func parseHistoryTrustedProxyPeer(value string) (netip.Addr, error) {
+	if value == "" {
+		return netip.Addr{}, nil
+	}
+	ip, err := netip.ParseAddr(value)
+	if err != nil || ip.Zone() != "" || !(ip.IsPrivate() || ip.IsLoopback()) {
+		return netip.Addr{}, errors.New("AUTH_HISTORY_TRUSTED_PROXY_PEER must be one private or loopback IP address")
+	}
+	return ip.Unmap(), nil
+}
+
+// The existing Nginx vhost is trusted only when its exact Docker gateway is
+// the socket peer; Nginx overwrites X-Real-IP. Location is resolved locally
+// from the validated visitor IP, never from HTTP location headers.
+func loginRequestEvidence(r *http.Request, trustedPeer netip.Addr) (*string, *string, *string) {
+	var ip, source *string
+	peer := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(peer); err == nil {
+		peer = host
+	}
+	peerIP, peerErr := netip.ParseAddr(peer)
+	if peerErr == nil && trustedPeer.IsValid() && peerIP.Unmap() == trustedPeer {
+		// The current Nginx vhost sets X-Real-IP to its socket peer, so a
+		// direct-origin request cannot substitute a value here. Do not read
+		// CF-Connecting-IP unless that peer is a published Cloudflare edge.
+		realIP, err := netip.ParseAddr(strings.TrimSpace(r.Header.Get("X-Real-IP")))
+		if err == nil && realIP.IsValid() && realIP.Zone() == "" && !realIP.IsUnspecified() && !realIP.IsMulticast() {
+			if isCloudflareAddress(realIP) {
+				visitorIP, err := netip.ParseAddr(strings.TrimSpace(r.Header.Get("CF-Connecting-IP")))
+				if err == nil && visitorIP.IsGlobalUnicast() && !visitorIP.IsPrivate() && visitorIP.Zone() == "" && !isCloudflarePseudoIPv4(visitorIP) {
+					ipValue := visitorIP.Unmap().String()
+					ip = &ipValue
+					sourceValue := "cloudflare"
+					source = &sourceValue
+				}
+			} else {
+				ipValue := realIP.Unmap().String()
+				ip = &ipValue
+				sourceValue := "nginx_remote_addr"
+				source = &sourceValue
+			}
+		}
+	} else {
+		if peerErr == nil && peerIP.IsGlobalUnicast() && !peerIP.IsPrivate() {
+			ipValue := peerIP.Unmap().String()
+			ip = &ipValue
+			sourceValue := "direct_socket"
+			source = &sourceValue
+		}
+	}
+	var device *string
+	if value := cleanHistoryText(r.UserAgent(), 1024); value != "" {
+		device = &value
+	}
+	return ip, device, source
+}
+
+func cleanHistoryText(value string, maxRunes int) string {
+	value = strings.ToValidUTF8(value, "")
+	var out strings.Builder
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			continue
+		}
+		out.WriteRune(r)
+		maxRunes--
+		if maxRunes == 0 {
+			break
+		}
+	}
+	return strings.TrimSpace(out.String())
+}
+
+func (a *app) historyUser(w http.ResponseWriter, r *http.Request) (uint64, bool) {
 	if !a.requireUI(w, r) {
-		return
+		return 0, false
 	}
 	userID, ok := a.sessionUser(r)
 	if !ok {
 		oauthError(w, http.StatusUnauthorized, "login_required")
+		return 0, false
+	}
+	return userID, true
+}
+
+func (a *app) loginHistory(w http.ResponseWriter, r *http.Request) {
+	userID, ok := a.historyUser(w, r)
+	if !ok {
 		return
 	}
-	rows, err := a.db.QueryContext(r.Context(), `SELECT id,method,logged_in_at FROM auth_login_history WHERE user_id=? ORDER BY logged_in_at DESC,id DESC LIMIT ?`, userID, loginHistoryLimit)
+	rows, err := a.db.QueryContext(r.Context(), `SELECT id,method,logged_in_at,ip_address,geo_city,geo_region,geo_country,user_agent,ip_source,geo_source,geo_db_release,geo_db_sha256 FROM auth_login_history WHERE user_id=? ORDER BY logged_in_at DESC,id DESC LIMIT ?`, userID, loginHistoryPageSize)
 	if err != nil {
 		oauthError(w, http.StatusServiceUnavailable, "history_unavailable")
 		return
@@ -49,8 +164,8 @@ func (a *app) loginHistory(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	history := make([]loginHistoryEntry, 0)
 	for rows.Next() {
-		var entry loginHistoryEntry
-		if err := rows.Scan(&entry.ID, &entry.Method, &entry.LoggedInAt); err != nil {
+		entry, err := scanLoginHistory(rows)
+		if err != nil {
 			oauthError(w, http.StatusServiceUnavailable, "history_unavailable")
 			return
 		}
@@ -61,4 +176,105 @@ func (a *app) loginHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]any{"history": history})
+}
+
+type historyScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanLoginHistory(row historyScanner) (loginHistoryEntry, error) {
+	var entry loginHistoryEntry
+	var ip, city, region, country, device, source, geoSource, geoRelease, geoDBSHA256 *string
+	err := row.Scan(&entry.ID, &entry.Method, &entry.LoggedInAt, &ip, &city, &region, &country, &device, &source, &geoSource, &geoRelease, &geoDBSHA256)
+	if err != nil {
+		return entry, err
+	}
+	entry.IPAddress, entry.Device, entry.IPSource = ip, device, source
+	entry.GeoSource, entry.GeoRelease, entry.GeoDBSHA256 = geoSource, geoRelease, geoDBSHA256
+	if city != nil || region != nil || country != nil {
+		entry.Location = &loginLocation{City: stringValue(city), Region: stringValue(region), Country: stringValue(country)}
+	}
+	return entry, nil
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func nilIfEmpty(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+// Export every retained event. Query rows and CSV output are streamed, keeping
+// memory bounded even when an account has a long history.
+func (a *app) exportLoginHistory(w http.ResponseWriter, r *http.Request) {
+	userID, ok := a.historyUser(w, r)
+	if !ok {
+		return
+	}
+	rows, err := a.db.QueryContext(r.Context(), `SELECT id,method,logged_in_at,ip_address,geo_city,geo_region,geo_country,user_agent,ip_source,geo_source,geo_db_release,geo_db_sha256 FROM auth_login_history WHERE user_id=? ORDER BY logged_in_at ASC,id ASC`, userID)
+	if err != nil {
+		oauthError(w, http.StatusServiceUnavailable, "history_unavailable")
+		return
+	}
+	defer rows.Close()
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="taskly-login-history.csv"`)
+	w.WriteHeader(http.StatusOK)
+	// Excel recognizes UTF-8 reliably when the CSV starts with a BOM.
+	if _, err := w.Write([]byte{0xef, 0xbb, 0xbf}); err != nil {
+		return
+	}
+	csvWriter := csv.NewWriter(w)
+	if err := csvWriter.Write([]string{"account_user_id", "event_id", "logged_in_at_utc", "method", "ip_address", "ip_source", "city", "region", "country_code", "location_source", "device_user_agent", "location_database_release", "location_database_sha256", "location_source_url"}); err != nil {
+		return
+	}
+	for rows.Next() {
+		entry, err := scanLoginHistory(rows)
+		if err != nil {
+			log.Printf("login history CSV scan failed: %v", err)
+			panic(http.ErrAbortHandler)
+		}
+		var city, region, country string
+		if entry.Location != nil {
+			city, region, country = entry.Location.City, entry.Location.Region, entry.Location.Country
+		}
+		var sourceURL string
+		if stringValue(entry.GeoSource) == geoIPSource {
+			sourceURL = geoIPURL
+		}
+		if err := csvWriter.Write([]string{
+			strconv.FormatUint(userID, 10), strconv.FormatUint(entry.ID, 10),
+			entry.LoggedInAt.UTC().Format(time.RFC3339Nano), csvSafe(entry.Method),
+			stringValue(entry.IPAddress), csvSafe(stringValue(entry.IPSource)),
+			csvSafe(city), csvSafe(region), csvSafe(country), csvSafe(stringValue(entry.GeoSource)), csvSafe(stringValue(entry.Device)),
+			csvSafe(stringValue(entry.GeoRelease)), csvSafe(stringValue(entry.GeoDBSHA256)), sourceURL,
+		}); err != nil {
+			return
+		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("login history CSV query failed: %v", err)
+		panic(http.ErrAbortHandler)
+	}
+	csvWriter.Flush()
+	if err := csvWriter.Error(); err != nil {
+		log.Printf("login history CSV write failed: %v", err)
+	}
+}
+
+func csvSafe(value string) string {
+	first := strings.TrimLeftFunc(value, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
+	})
+	if first != "" && strings.ContainsRune("=+-@", []rune(first)[0]) {
+		return "'" + value
+	}
+	return value
 }

@@ -105,6 +105,8 @@ func (c *securityTestConn) QueryContext(_ context.Context, query string, args []
 		return &securityTestRows{columns: []string{"user_id"}, values: [][]driver.Value{{int64(7)}}}, nil
 	case strings.Contains(query, "SELECT attempts FROM auth_rate_limits"):
 		return &securityTestRows{columns: []string{"attempts"}, values: [][]driver.Value{{int64(1)}}}, nil
+	case strings.Contains(query, "SELECT email,notification_lang FROM users"):
+		return &securityTestRows{columns: []string{"email", "notification_lang"}, values: [][]driver.Value{{c.config.email, "ja"}}}, nil
 	case strings.Contains(query, "SELECT email FROM users"):
 		return &securityTestRows{columns: []string{"email"}, values: [][]driver.Value{{c.config.email}}}, nil
 	case strings.Contains(query, "SELECT is_deleted=0 FROM users"):

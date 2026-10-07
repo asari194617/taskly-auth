@@ -9,6 +9,7 @@ import { BusyLabel, LoadingStatus } from "./loading";
 import { PasskeysSection } from "./passkeys-react";
 import { SecurityStepUp, useSecurityStepUp } from "./security-step-up";
 import { LocaleRoot, tr, useLocale } from "./i18n";
+import { securityLoginURL } from "./login-flow";
 
 interface PasswordStatus { has_password: boolean }
 interface EmailSettings { enabled: boolean }
@@ -61,7 +62,7 @@ function passkeySummary(count: number): string {
 function SecurityApp() {
   const locale = useLocale();
   const section = currentSection();
-  const stepUp = useSecurityStepUp(section === "passkeys" ? "passkeys" : "security");
+  const stepUp = useSecurityStepUp(section === "overview" ? null : section);
   const [passwordStatus, setPasswordStatus] = useState<PasswordStatus | null>(null);
   const [emailSettings, setEmailSettings] = useState<EmailSettings | null>(null);
   const [totpStatus, setTotpStatus] = useState<TotpStatus | null>(null);
@@ -82,7 +83,7 @@ function SecurityApp() {
   async function fetchStatus<T>(path: string, update: (value: T) => void) {
     try {
       const response = await request(path);
-      if (response.status === 401) { location.assign("/login?next=security"); return; }
+      if (response.status === 401) { location.assign(securityLoginURL(section === "overview" ? null : section)); return; }
       if (!response.ok) throw new Error("status");
       update(await json<T>(response));
     } catch { setError(tr("認証設定を読み込めませんでした。", "Could not load security settings.")); }
@@ -107,7 +108,7 @@ function SecurityApp() {
       const response = await request(path, body);
       if (response.status === 401) {
         const payload = await json<ErrorPayload>(response).catch((): ErrorPayload => ({}));
-        if (payload.error === "login_required") { location.assign("/login?next=security"); return; }
+        if (payload.error === "login_required") { location.assign(securityLoginURL(section === "overview" ? null : section)); return; }
       }
       if (response.status === 403) {
         const payload = await json<ErrorPayload>(response).catch((): ErrorPayload => ({}));
@@ -216,7 +217,7 @@ function SecurityApp() {
     </section>}
     {section === "password" && stepUp.canEdit && passwordStatus && <section className="security-detail">
       <p>{passwordStatus.has_password ? tr("現在のパスワードを入力して変更します。", "Enter your current password to change it.") : tr("ログインに使うパスワードを設定します。", "Set a password for signing in.")}</p>
-      {passwordChanged ? <a href="/login?next=security">{tr("ログインし直す", "Sign in again")}</a> : <form onSubmit={changePassword}>{passwordStatus.has_password && <TextField id="current" label={tr("現在のパスワード", "Current password")} showLabel type="password" autoComplete="current-password" value={currentPassword} onChange={setCurrentPassword} />}<TextField id="next" label={tr("新しいパスワード（8文字以上）", "New password (8 characters or more)")} showLabel type="password" required minLength={8} autoComplete="new-password" value={nextPassword} onChange={setNextPassword} /><Button type="submit" variant="Primary" disabled={busy}><BusyLabel busy={busy}>{tr("更新する", "Update")}</BusyLabel></Button></form>}
+      {passwordChanged ? <a href={securityLoginURL("password")}>{tr("ログインし直す", "Sign in again")}</a> : <form onSubmit={changePassword}>{passwordStatus.has_password && <TextField id="current" label={tr("現在のパスワード", "Current password")} showLabel type="password" autoComplete="current-password" value={currentPassword} onChange={setCurrentPassword} />}<TextField id="next" label={tr("新しいパスワード（8文字以上）", "New password (8 characters or more)")} showLabel type="password" required minLength={8} autoComplete="new-password" value={nextPassword} onChange={setNextPassword} /><Button type="submit" variant="Primary" disabled={busy}><BusyLabel busy={busy}>{tr("更新する", "Update")}</BusyLabel></Button></form>}
     </section>}
     {section === "passkeys" && <PasskeysSection stepUp={stepUp} />}
     {showRecoveryConfirm && <Modal title={recoveryStatus?.issued ? tr("復旧コードを再発行", "Reissue recovery codes") : tr("復旧コードを発行", "Generate recovery codes")} size="S" bottomSheet isOpen onClose={() => setShowRecoveryConfirm(false)} isDismissable closeButtonAriaLabel={tr("閉じる", "Close")}>

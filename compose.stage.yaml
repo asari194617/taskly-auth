@@ -10,6 +10,7 @@ services:
     environment:
       AUTH_ADDR: 0.0.0.0:3067
       NODE_ENV: production
+      EMAIL_COMPOSE_GRPC_ADDR: ${EMAIL_COMPOSE_GRPC_ADDR:-email-compose:50051}
       AUTH_MIGRATION_READY: "0"
     networks:
       - taskly

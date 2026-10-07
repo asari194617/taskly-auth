@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/netip"
 	"os"
 	"strings"
 	"time"
@@ -14,19 +15,21 @@ import (
 )
 
 type app struct {
-	db                     *sql.DB
-	issuer                 string
-	uiURL                  string
-	clientID               string
-	clientSecret           string
-	redirectURI            string
-	publicClients          map[string]string
-	secure                 bool
-	ready                  bool
-	alerts                 *alerter
-	webAuthn               *webauthn.WebAuthn
-	internalToken          string
-	securityStepUpRequired bool
+	db                      *sql.DB
+	issuer                  string
+	uiURL                   string
+	clientID                string
+	clientSecret            string
+	redirectURI             string
+	publicClients           map[string]string
+	secure                  bool
+	ready                   bool
+	alerts                  *alerter
+	webAuthn                *webauthn.WebAuthn
+	internalToken           string
+	securityStepUpRequired  bool
+	historyTrustedProxyPeer netip.Addr
+	geoDB                   *cityGeoDB
 }
 
 func env(key, fallback string) string {
@@ -60,6 +63,17 @@ func main() {
 		alerts.sendSync("Taskly auth startup failed: security step-up gate invalid")
 		log.Fatal("AUTH_SECURITY_STEP_UP_REQUIRED must be 0 or 1")
 	}
+	historyTrustedProxyPeer, err := parseHistoryTrustedProxyPeer(os.Getenv("AUTH_HISTORY_TRUSTED_PROXY_PEER"))
+	if err != nil {
+		alerts.sendSync("Taskly auth startup failed: login history proxy peer invalid")
+		log.Fatal(err)
+	}
+	geoDB, err := openCityGeoDB(os.Getenv("AUTH_GEOIP_MMDB_PATH"))
+	if err != nil {
+		alerts.sendSync("Taskly auth startup failed: IP geolocation database invalid")
+		log.Fatal("IP geolocation database invalid: ", err)
+	}
+	defer geoDB.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	err = db.PingContext(ctx)
 	cancel()
@@ -68,15 +82,17 @@ func main() {
 		log.Fatal("auth DB unavailable")
 	}
 	a := &app{
-		db:                     db,
-		issuer:                 strings.TrimRight(env("AUTH_ISSUER", "http://localhost:3067"), "/"),
-		uiURL:                  strings.TrimRight(env("AUTH_UI_URL", "http://localhost:3068"), "/"),
-		clientID:               env("OAUTH_CLIENT_ID", "taskly-web"),
-		clientSecret:           os.Getenv("OAUTH_CLIENT_SECRET"),
-		redirectURI:            os.Getenv("OAUTH_REDIRECT_URI"),
-		alerts:                 alerts,
-		internalToken:          os.Getenv("AUTH_INTERNAL_TOKEN"),
-		securityStepUpRequired: stepUpSetting == "1",
+		db:                      db,
+		issuer:                  strings.TrimRight(env("AUTH_ISSUER", "http://localhost:3067"), "/"),
+		uiURL:                   strings.TrimRight(env("AUTH_UI_URL", "http://localhost:3068"), "/"),
+		clientID:                env("OAUTH_CLIENT_ID", "taskly-web"),
+		clientSecret:            os.Getenv("OAUTH_CLIENT_SECRET"),
+		redirectURI:             os.Getenv("OAUTH_REDIRECT_URI"),
+		alerts:                  alerts,
+		internalToken:           os.Getenv("AUTH_INTERNAL_TOKEN"),
+		securityStepUpRequired:  stepUpSetting == "1",
+		historyTrustedProxyPeer: historyTrustedProxyPeer,
+		geoDB:                   geoDB,
 	}
 	a.publicClients, err = parsePublicClients(os.Getenv("OAUTH_PUBLIC_CLIENTS_JSON"), a.clientID)
 	if err != nil {
@@ -108,6 +124,10 @@ func main() {
 		alerts.sendSync("Taskly auth startup failed: internal API configuration invalid")
 		log.Fatal("AUTH_INTERNAL_TOKEN must contain at least 32 characters when migration is ready")
 	}
+	if env("NODE_ENV", "development") == "production" && a.ready && !a.historyTrustedProxyPeer.IsValid() {
+		alerts.sendSync("Taskly auth startup failed: login history proxy configuration invalid")
+		log.Fatal("AUTH_HISTORY_TRUSTED_PROXY_PEER is required when production auth is ready")
+	}
 	if err := a.ensureOAuthSchema(context.Background()); err != nil {
 		alerts.sendSync("Taskly auth startup failed: database schema unavailable")
 		log.Fatal("OAuth schema: ", err)
@@ -124,6 +144,7 @@ func main() {
 	api.HandleFunc("POST /auth/logout", a.logout)
 	api.HandleFunc("GET /auth/profile", a.profile)
 	api.HandleFunc("GET /auth/login-history", a.loginHistory)
+	api.HandleFunc("GET /auth/login-history/export", a.exportLoginHistory)
 	api.HandleFunc("POST /auth/profile", a.updateProfile)
 	api.HandleFunc("POST /auth/profile/email-verification/request", a.requestEmailVerification)
 	api.HandleFunc("POST /auth/profile/email-verification/confirm", a.confirmEmailVerification)

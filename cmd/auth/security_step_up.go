@@ -163,8 +163,8 @@ func (a *app) requestSecurityStepUpCode(w http.ResponseWriter, r *http.Request) 
 		oauthError(w, http.StatusTooManyRequests, "rate_limited")
 		return
 	}
-	var email string
-	if err := a.db.QueryRowContext(r.Context(), `SELECT email FROM users WHERE id=? AND is_deleted=0`, id).Scan(&email); err != nil {
+	var email, locale string
+	if err := a.db.QueryRowContext(r.Context(), `SELECT email,notification_lang FROM users WHERE id=? AND is_deleted=0`, id).Scan(&email, &locale); err != nil {
 		oauthError(w, http.StatusServiceUnavailable, "temporarily_unavailable")
 		return
 	}
@@ -192,7 +192,7 @@ func (a *app) requestSecurityStepUpCode(w http.ResponseWriter, r *http.Request) 
 		oauthError(w, http.StatusServiceUnavailable, "temporarily_unavailable")
 		return
 	}
-	if err := sendMailCode(email, code, "security verification"); err != nil {
+	if err := sendMailCode(r.Context(), email, code, securityCodePurpose, locale); err != nil {
 		_, _ = a.db.ExecContext(r.Context(), `DELETE FROM auth_security_codes WHERE session_hash=? AND hashed_code=?`, sessionHash, a.securityCodeDigest("email", id, sessionHash, email, code))
 		a.alerts.send("Taskly auth security verification email delivery failed")
 		oauthError(w, http.StatusServiceUnavailable, "temporarily_unavailable")

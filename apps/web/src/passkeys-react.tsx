@@ -5,6 +5,7 @@ import { decodeBase64url, encodeBase64url } from "./dom";
 import { BusyLabel, LoadingStatus } from "./loading";
 import { useSecurityStepUp } from "./security-step-up";
 import { getLocale, tr } from "./i18n";
+import { securityLoginURL } from "./login-flow";
 
 interface PasskeySummary { id: number; device_name: string; created_at: string }
 interface PasskeyListPayload { passkeys: PasskeySummary[] }
@@ -20,7 +21,7 @@ function registrationDate(value: string): string {
 async function authenticatedRequest<T>(path: string, body?: unknown): Promise<T> {
   const response = await request(path, body);
   const payload = await json<T & { error?: string }>(response).catch(() => ({} as T & { error?: string }));
-  if (response.status === 401 && payload.error === "login_required") { location.assign("/login?next=security"); throw new Error("login required"); }
+  if (response.status === 401 && payload.error === "login_required") { location.assign(securityLoginURL("passkeys")); throw new Error("login required"); }
   if (!response.ok) throw new Error(payload.error || "request failed");
   return payload;
 }

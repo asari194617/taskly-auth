@@ -54,6 +54,8 @@ jobs:
           # Recreate an existing installation whose auth_sessions table predates
           # security step-up. The API must add the nullable column on startup.
           docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -e "ALTER TABLE auth_sessions DROP COLUMN security_verified_at"'
+          # Existing login history predates IP, location, and device columns.
+          docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -e "ALTER TABLE auth_login_history DROP COLUMN ip_address, DROP COLUMN geo_city, DROP COLUMN geo_region, DROP COLUMN geo_country, DROP COLUMN user_agent, DROP COLUMN ip_source, DROP COLUMN geo_source, DROP COLUMN geo_db_release, DROP COLUMN geo_db_sha256"'
           docker compose up -d --build auth ui
           for attempt in $(seq 1 90); do
             if curl -fsS http://localhost:3067/healthz && curl -fsS http://localhost:3068/login >/dev/null; then
@@ -64,6 +66,9 @@ jobs:
           curl -fsS http://localhost:3067/healthz
           curl -fsS http://localhost:3068/login >/dev/null
           docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -N -e "DESCRIBE auth_sessions"' | grep -q '^security_verified_at[[:space:]]'
+          docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -N -e "DESCRIBE auth_login_history"' | grep -q '^ip_address[[:space:]]'
+          docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -N -e "DESCRIBE auth_login_history"' | grep -q '^user_agent[[:space:]]'
+          docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -N -e "DESCRIBE auth_login_history"' | grep -q '^geo_db_sha256[[:space:]]'
       - name: Seed development account and exercise confidential and public clients
         env:
           AUTH_DSN: auth:auth_dev_password@tcp(127.0.0.1:3307)/taskly_auth?parseTime=true&charset=utf8mb4&loc=UTC

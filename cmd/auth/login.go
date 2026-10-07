@@ -1,21 +1,17 @@
 package main
 
 import (
-	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/tls"
 	"database/sql"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"math/big"
-	"net"
 	"net/http"
 	"net/mail"
-	"net/smtp"
 	"strings"
 	"time"
 
@@ -273,6 +269,14 @@ func (a *app) finishLogin(w http.ResponseWriter, r *http.Request, id uint64, met
 	}
 	loggedInAt := time.Now().UTC()
 	expires := loggedInAt.Add(12 * time.Hour)
+	ip, device, ipSource := loginRequestEvidence(r, a.historyTrustedProxyPeer)
+	geo := a.resolveLoginLocation(ip, ipSource)
+	var city, region, country any
+	var geoSource, geoRelease, geoDBSHA256 any
+	if geo != nil {
+		city, region, country = nilIfEmpty(geo.Location.City), nilIfEmpty(geo.Location.Region), nilIfEmpty(geo.Location.Country)
+		geoSource, geoRelease, geoDBSHA256 = geo.Source, geo.Release, geo.SHA256
+	}
 	tx, err := a.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		oauthError(w, 500, "server_error")
@@ -292,7 +296,7 @@ func (a *app) finishLogin(w http.ResponseWriter, r *http.Request, id uint64, met
 		_, err = tx.ExecContext(r.Context(), `INSERT INTO auth_sessions (token_hash,user_id,expires_at,created_at) VALUES (?,?,?,?)`, digest(token), id, expires, loggedInAt)
 	}
 	if err == nil {
-		_, err = tx.ExecContext(r.Context(), `INSERT INTO auth_login_history (user_id,method,logged_in_at) VALUES (?,?,?)`, id, method, loggedInAt)
+		_, err = tx.ExecContext(r.Context(), `INSERT INTO auth_login_history (user_id,method,logged_in_at,ip_address,geo_city,geo_region,geo_country,user_agent,ip_source,geo_source,geo_db_release,geo_db_sha256) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, id, method, loggedInAt, ip, city, region, country, device, ipSource, geoSource, geoRelease, geoDBSHA256)
 	}
 	if err == nil {
 		err = tx.Commit()
@@ -302,11 +306,6 @@ func (a *app) finishLogin(w http.ResponseWriter, r *http.Request, id uint64, met
 		a.alerts.send("Taskly auth session storage failed")
 		return
 	}
-	pruneContext, cancelPrune := context.WithTimeout(context.Background(), 2*time.Second)
-	if err := a.pruneLoginHistory(pruneContext, id); err != nil {
-		a.alerts.send("Taskly auth login history pruning failed")
-	}
-	cancelPrune()
 	http.SetCookie(w, &http.Cookie{Name: "taskly_auth_session", Value: token, Path: "/", Expires: expires, MaxAge: 12 * 3600, Secure: a.secure, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	jsonResponse(w, 200, map[string]bool{"authenticated": true})
 }
@@ -355,7 +354,8 @@ func (a *app) requestCode(w http.ResponseWriter, r *http.Request) {
 	}
 	var id uint64
 	var allowed, deleted bool
-	err = a.db.QueryRowContext(r.Context(), `SELECT id,email_code_allowed,is_deleted FROM users WHERE email=?`, email).Scan(&id, &allowed, &deleted)
+	var locale string
+	err = a.db.QueryRowContext(r.Context(), `SELECT id,email_code_allowed,is_deleted,notification_lang FROM users WHERE email=?`, email).Scan(&id, &allowed, &deleted, &locale)
 	if err != nil || !allowed || deleted || a.blocked(r, id) {
 		w.WriteHeader(202)
 		return
@@ -372,84 +372,12 @@ func (a *app) requestCode(w http.ResponseWriter, r *http.Request) {
 		a.alerts.send("Taskly auth email code storage failed")
 		return
 	}
-	if err := sendLoginCode(email, code); err != nil {
+	if err := sendMailCode(r.Context(), email, code, loginCodePurpose, locale); err != nil {
 		oauthError(w, 503, "temporarily_unavailable")
 		a.alerts.send("Taskly auth email delivery failed")
 		return
 	}
 	w.WriteHeader(202)
-}
-
-func sendLoginCode(email, code string) error {
-	return sendMailCode(email, code, "authentication")
-}
-
-func sendMailCode(email, code, purpose string) error {
-	host := env("SMTP_HOST", "")
-	port := env("SMTP_PORT", "587")
-	from := env("SMTP_FROM", "")
-	if host == "" || from == "" {
-		return errors.New("SMTP not configured")
-	}
-	addr := net.JoinHostPort(host, port)
-	var auth smtp.Auth
-	if user := env("SMTP_USER", ""); user != "" {
-		auth = smtp.PlainAuth("", user, env("SMTP_PASSWORD", ""), host)
-	}
-	if purpose != "authentication" && purpose != "email verification" && purpose != "security verification" {
-		return errors.New("invalid email purpose")
-	}
-	message := []byte("From: " + from + "\r\nTo: " + email + "\r\nSubject: Taskly " + purpose + " code\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\nYour Taskly " + purpose + " code is " + code + ". It expires in 10 minutes.\r\n")
-	mode := strings.ToLower(env("SMTP_TLS", "starttls"))
-	var conn net.Conn
-	var err error
-	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	if mode == "smtps" {
-		conn, err = tls.DialWithDialer(dialer, "tcp", addr, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
-	} else {
-		conn, err = dialer.Dial("tcp", addr)
-	}
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	client, err := smtp.NewClient(conn, host)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-	if mode == "starttls" {
-		if ok, _ := client.Extension("STARTTLS"); !ok {
-			return errors.New("SMTP STARTTLS unavailable")
-		}
-		if err := client.StartTLS(&tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}); err != nil {
-			return err
-		}
-	} else if mode != "smtps" && mode != "none" {
-		return errors.New("invalid SMTP_TLS")
-	}
-	if auth != nil {
-		if err := client.Auth(auth); err != nil {
-			return err
-		}
-	}
-	if err := client.Mail(from); err != nil {
-		return err
-	}
-	if err := client.Rcpt(email); err != nil {
-		return err
-	}
-	writer, err := client.Data()
-	if err != nil {
-		return err
-	}
-	if _, err := writer.Write(message); err != nil {
-		return err
-	}
-	if err := writer.Close(); err != nil {
-		return err
-	}
-	return client.Quit()
 }
 
 func validEmail(email string) bool {

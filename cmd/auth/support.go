@@ -119,7 +119,7 @@ func (a *app) ensureOAuthSchema(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS oauth_access_tokens (token_hash CHAR(64) PRIMARY KEY, family_id CHAR(64), user_id BIGINT UNSIGNED NOT NULL, client_id VARCHAR(128) NOT NULL, scope_value VARCHAR(255) NOT NULL, expires_at DATETIME NOT NULL, revoked_at DATETIME, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX idx_oauth_access_family (family_id))`,
 		`CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (token_hash CHAR(64) PRIMARY KEY, family_id CHAR(64) NOT NULL, user_id BIGINT UNSIGNED NOT NULL, client_id VARCHAR(128) NOT NULL, scope_value VARCHAR(255) NOT NULL, expires_at DATETIME NOT NULL, used_at DATETIME, revoked_at DATETIME, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX idx_family (family_id))`,
 		`CREATE TABLE IF NOT EXISTS auth_sessions (token_hash CHAR(64) PRIMARY KEY, user_id BIGINT UNSIGNED NOT NULL, expires_at DATETIME NOT NULL, security_verified_at DATETIME NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
-		`CREATE TABLE IF NOT EXISTS auth_login_history (id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT, user_id BIGINT UNSIGNED NOT NULL, method VARCHAR(32) NOT NULL, logged_in_at DATETIME NOT NULL, INDEX idx_auth_login_history_user_recent (user_id,logged_in_at,id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS auth_login_history (id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT, user_id BIGINT UNSIGNED NOT NULL, method VARCHAR(32) NOT NULL, logged_in_at DATETIME NOT NULL, ip_address VARCHAR(45), geo_city VARCHAR(128), geo_region VARCHAR(128), geo_country CHAR(2), user_agent VARCHAR(1024), ip_source VARCHAR(32), geo_source VARCHAR(32), geo_db_release CHAR(7), geo_db_sha256 CHAR(64), INDEX idx_auth_login_history_user_recent (user_id,logged_in_at,id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 		`CREATE TABLE IF NOT EXISTS auth_security_codes (session_hash CHAR(64) PRIMARY KEY, user_id BIGINT UNSIGNED NOT NULL, email VARCHAR(255) NOT NULL, hashed_code CHAR(64) NOT NULL, expires_at DATETIME NOT NULL, failed_attempts INT NOT NULL DEFAULT 0, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX idx_auth_security_codes_user (user_id))`,
 		`CREATE TABLE IF NOT EXISTS auth_security_totp_uses (user_id BIGINT UNSIGNED NOT NULL, code_hash CHAR(64) NOT NULL, expires_at DATETIME NOT NULL, PRIMARY KEY (user_id,code_hash), INDEX idx_auth_security_totp_uses_expires (expires_at))`,
 		`CREATE TABLE IF NOT EXISTS auth_challenges (token_hash CHAR(64) PRIMARY KEY, user_id BIGINT UNSIGNED NOT NULL, attempts INT NOT NULL DEFAULT 0, expires_at DATETIME NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
@@ -150,6 +150,27 @@ func (a *app) ensureOAuthSchema(ctx context.Context) error {
 	if securityVerifiedColumnCount == 0 {
 		if _, err := a.db.ExecContext(ctx, `ALTER TABLE auth_sessions ADD COLUMN security_verified_at DATETIME NULL`); err != nil {
 			return fmt.Errorf("upgrade security step-up schema: %w", err)
+		}
+	}
+	for _, column := range []struct{ name, definition string }{
+		{"ip_address", "VARCHAR(45) NULL"},
+		{"geo_city", "VARCHAR(128) NULL"},
+		{"geo_region", "VARCHAR(128) NULL"},
+		{"geo_country", "CHAR(2) NULL"},
+		{"user_agent", "VARCHAR(1024) NULL"},
+		{"ip_source", "VARCHAR(32) NULL"},
+		{"geo_source", "VARCHAR(32) NULL"},
+		{"geo_db_release", "CHAR(7) NULL"},
+		{"geo_db_sha256", "CHAR(64) NULL"},
+	} {
+		var count int
+		if err := a.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='auth_login_history' AND COLUMN_NAME=?`, column.name).Scan(&count); err != nil {
+			return fmt.Errorf("inspect login history column %s: %w", column.name, err)
+		}
+		if count == 0 {
+			if _, err := a.db.ExecContext(ctx, `ALTER TABLE auth_login_history ADD COLUMN `+column.name+` `+column.definition); err != nil {
+				return fmt.Errorf("upgrade login history column %s: %w", column.name, err)
+			}
 		}
 	}
 	var count int
