@@ -4,7 +4,7 @@ import { Button, CharcoalProvider, TextField } from "@charcoal-ui/react";
 import { createRoot } from "react-dom/client";
 import { useEffect, useState, type FormEvent } from "react";
 import { request } from "./api";
-import { getThemePreference, setThemePreference } from "./theme";
+import { AuthHeader } from "./auth-header";
 
 interface Profile { email: string; display_name: string; email_verified: boolean }
 
@@ -16,7 +16,6 @@ function ProfileApp() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [theme, setTheme] = useState(getThemePreference());
 
   async function load() {
     const response = await request("/auth/profile");
@@ -63,7 +62,7 @@ function ProfileApp() {
   }
 
   return <CharcoalProvider><main>
-    <header className="page-header"><span className="brand">Taskly</span><label className="theme-control">テーマ <select data-theme-select aria-label="テーマ" value={theme} onChange={(event) => { const next = event.target.value as typeof theme; setThemePreference(next); setTheme(next); }}><option value="system">自動</option><option value="light">ライト</option><option value="dark">ダーク</option></select></label></header>
+    <AuthHeader />
     <p className="eyebrow">アカウント</p><h1>アカウント情報</h1>
     <p className="message error" role="alert">{error}</p><p className="message" role="status">{message}</p>
     {profile && <>
