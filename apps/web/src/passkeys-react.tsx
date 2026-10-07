@@ -1,12 +1,9 @@
-import "./style.css";
-import "@charcoal-ui/react/dist/index.css";
 import { Button, Modal, ModalAlign, ModalBody, ModalButtons, ModalHeader, TextField } from "@charcoal-ui/react";
-import { createRoot } from "react-dom/client";
 import { useEffect, useState, type FormEvent } from "react";
 import { request, json } from "./api";
 import { decodeBase64url, encodeBase64url } from "./dom";
-import { AccountLayout } from "./account-layout";
-import { SecurityStepUp, useSecurityStepUp } from "./security-step-up";
+import { BusyLabel, LoadingStatus } from "./loading";
+import { useSecurityStepUp } from "./security-step-up";
 
 interface PasskeySummary { id: number; device_name: string; created_at: string }
 interface PasskeyListPayload { passkeys: PasskeySummary[] }
@@ -27,9 +24,10 @@ async function authenticatedRequest<T>(path: string, body?: unknown): Promise<T>
   return payload;
 }
 
-function PasskeysApp() {
-  const stepUp = useSecurityStepUp("passkeys");
+export function PasskeysSection({ stepUp }: { stepUp: ReturnType<typeof useSecurityStepUp> }) {
   const [keys, setKeys] = useState<PasskeySummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -39,8 +37,13 @@ function PasskeysApp() {
   async function loadKeys() {
     const result = await authenticatedRequest<PasskeyListPayload>("/auth/passkeys");
     setKeys(result.passkeys);
+    setLoadFailed(false);
   }
-  useEffect(() => { void loadKeys().catch(() => setError("パスキーを読み込めませんでした。")); }, []);
+  useEffect(() => {
+    void loadKeys()
+      .catch(() => { setLoadFailed(true); setError("パスキーを読み込めませんでした。"); })
+      .finally(() => setLoading(false));
+  }, []);
 
   async function finishChange(message: string) {
     setDialog(null); setNotice(message);
@@ -128,13 +131,11 @@ function PasskeysApp() {
     finally { setBusy(false); }
   }
 
-  return <AccountLayout page="passkeys">
-    <h1>パスキー</h1>
+  return <section className="security-detail" aria-label="パスキーの管理">
     <p className="account-intro">登録した端末やセキュリティキーを管理します。</p>
     <p className="message error" role="alert">{error}</p><p className="message" role="status">{notice}</p>
-    <SecurityStepUp stepUp={stepUp} />
     <div className="passkey-heading"><h2>登録済みのパスキー</h2><Button type="button" variant="Primary" disabled={busy || !stepUp.canEdit} onClick={() => openDialog({ action: "register" })}>パスキーを登録</Button></div>
-    {keys.length ? <ul className="passkey-cards">{keys.map((key) => <li className="passkey-card" key={key.id}>
+    {loading ? <LoadingStatus>パスキーを読み込んでいます。</LoadingStatus> : loadFailed ? null : keys.length ? <ul className="passkey-cards">{keys.map((key) => <li className="passkey-card" key={key.id}>
       <div className="passkey-details"><h3>{key.device_name}</h3><p>登録日時: {registrationDate(key.created_at)}</p></div>
       <div className="passkey-actions">
         <Button type="button" size="S" disabled={busy || !stepUp.canEdit} aria-label={`${key.device_name}の名前を変更`} onClick={() => openDialog({ action: "rename", key })}>名前を変更</Button>
@@ -148,19 +149,18 @@ function PasskeysApp() {
           <ModalAlign><p className="account-dialog-description">「{dialog.key.device_name}」を削除しますか？このパスキーではログインできなくなります。</p></ModalAlign>
           {dialogError && <ModalAlign><p className="message error" role="alert">{dialogError}</p></ModalAlign>}
           <ModalButtons>
-            <Button type="button" variant="Danger" fullWidth disabled={busy || !stepUp.canEdit} onClick={() => void remove()}>{busy ? "削除中…" : "削除する"}</Button>
+            <Button type="button" variant="Danger" fullWidth disabled={busy || !stepUp.canEdit} onClick={() => void remove()}><BusyLabel busy={busy}>{busy ? "削除中…" : "削除する"}</BusyLabel></Button>
             <Button type="button" fullWidth disabled={busy} onClick={closeDialog}>キャンセル</Button>
           </ModalButtons>
         </> : <form className="passkey-dialog-form" onSubmit={(event) => void saveName(event)} aria-busy={busy}>
           <ModalAlign><TextField id="passkey-name" label="パスキーの名前" showLabel required autoFocus assistiveText="64文字以内" value={draftName} onChange={setDraftName} disabled={busy} /></ModalAlign>
           {dialogError && <ModalAlign><p className="message error" role="alert">{dialogError}</p></ModalAlign>}
           <ModalButtons>
-            <Button type="submit" variant="Primary" fullWidth disabled={busy || !stepUp.canEdit}>{busy ? dialog.action === "register" ? "登録中…" : "保存中…" : dialog.action === "register" ? "登録する" : "保存する"}</Button>
+            <Button type="submit" variant="Primary" fullWidth disabled={busy || !stepUp.canEdit}><BusyLabel busy={busy}>{busy ? dialog.action === "register" ? "登録中…" : "保存中…" : dialog.action === "register" ? "登録する" : "保存する"}</BusyLabel></Button>
             <Button type="button" fullWidth disabled={busy} onClick={closeDialog}>キャンセル</Button>
           </ModalButtons>
         </form>}
       </ModalBody>
     </Modal>}
-  </AccountLayout>;
+  </section>;
 }
-createRoot(document.getElementById("app")!).render(<PasskeysApp />);

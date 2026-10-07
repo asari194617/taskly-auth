@@ -1,6 +1,7 @@
 import { Button, TextField } from "@charcoal-ui/react";
 import { useEffect, useState, type FormEvent } from "react";
 import { json, request } from "./api";
+import { BusyLabel, LoadingStatus } from "./loading";
 
 type Method = "email" | "totp" | "recovery";
 interface Status { required: boolean; verified: boolean; methods: Method[] }
@@ -11,7 +12,8 @@ export function useSecurityStepUp(next: "security" | "passkeys") {
   const [method, setMethod] = useState<Method>("email");
   const [code, setCode] = useState("");
   const [sent, setSent] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<"send" | "verify" | null>(null);
+  const busy = busyAction !== null;
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -34,7 +36,7 @@ export function useSecurityStepUp(next: "security" | "passkeys") {
   useEffect(() => { void reload(); }, [next]);
 
   async function requestCode() {
-    setBusy(true); setError(""); setNotice("");
+    setBusyAction("send"); setError(""); setNotice("");
     try {
       const response = await request("/auth/security/step-up/request-code", {});
       if (response.status === 401) { location.assign(`/login?next=${next}`); return; }
@@ -42,11 +44,11 @@ export function useSecurityStepUp(next: "security" | "passkeys") {
       setSent(true); setNotice("登録メールアドレスへ確認コードを送信しました。");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "確認コードを送信できませんでした。");
-    } finally { setBusy(false); }
+    } finally { setBusyAction(null); }
   }
 
   async function verify(event: FormEvent) {
-    event.preventDefault(); setBusy(true); setError(""); setNotice("");
+    event.preventDefault(); setBusyAction("verify"); setError(""); setNotice("");
     try {
       const response = await request("/auth/security/step-up/verify", { method, code });
       if (!response.ok) {
@@ -59,7 +61,7 @@ export function useSecurityStepUp(next: "security" | "passkeys") {
       setNotice("本人確認が完了しました。設定を変更できます。");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "本人確認を完了できませんでした。");
-    } finally { setBusy(false); }
+    } finally { setBusyAction(null); }
   }
 
   function invalidate() {
@@ -68,7 +70,7 @@ export function useSecurityStepUp(next: "security" | "passkeys") {
   }
 
   return {
-    status, method, setMethod, code, setCode, sent, busy, error, notice,
+    status, method, setMethod, code, setCode, sent, busy, busyAction, error, notice,
     canEdit: status !== null && (!status.required || status.verified),
     requestCode, verify, invalidate, reload,
   };
@@ -86,12 +88,12 @@ export function SecurityStepUp({ stepUp }: { stepUp: StepUp }) {
         <Button type="button" size="S" variant="Navigation" isActive={stepUp.method === "totp"} aria-pressed={stepUp.method === "totp"} onClick={() => { stepUp.setMethod("totp"); stepUp.setCode(""); }}>認証アプリ</Button>
         {stepUp.status.methods.includes("recovery") && <Button type="button" size="S" variant="Navigation" isActive={stepUp.method === "recovery"} aria-pressed={stepUp.method === "recovery"} onClick={() => { stepUp.setMethod("recovery"); stepUp.setCode(""); }}>復旧コード</Button>}
       </div>}
-      {stepUp.method === "email" && <Button type="button" onClick={() => void stepUp.requestCode()} disabled={stepUp.busy}>{stepUp.sent ? "コードを再送信" : "登録メールへコードを送信"}</Button>}
+      {stepUp.method === "email" && <Button type="button" onClick={() => void stepUp.requestCode()} disabled={stepUp.busy}><BusyLabel busy={stepUp.busyAction === "send"}>{stepUp.sent ? "コードを再送信" : "登録メールへコードを送信"}</BusyLabel></Button>}
       {(stepUp.method !== "email" || stepUp.sent) && <form onSubmit={(event) => void stepUp.verify(event)}>
         <TextField id="security-step-up-code" label={stepUp.method === "email" ? "メールの6桁コード" : stepUp.method === "totp" ? "認証アプリの6桁コード" : "復旧コード"} showLabel required inputMode={stepUp.method === "recovery" ? "text" : "numeric"} pattern={stepUp.method === "recovery" ? undefined : "[0-9]{6}"} autoComplete={stepUp.method === "recovery" ? "off" : "one-time-code"} value={stepUp.code} onChange={stepUp.setCode} />
-        <Button type="submit" variant="Primary" disabled={stepUp.busy}>確認する</Button>
+        <Button type="submit" variant="Primary" disabled={stepUp.busy}><BusyLabel busy={stepUp.busyAction === "verify"}>確認する</BusyLabel></Button>
       </form>}
-    </> : !stepUp.error && <p>追加認証の状態を読み込んでいます。</p>}
+    </> : !stepUp.error && <LoadingStatus>追加認証の状態を読み込んでいます。</LoadingStatus>}
     <p className="message error" role="alert">{stepUp.error}</p>
     <p className="message" role="status">{stepUp.notice}</p>
   </section>;

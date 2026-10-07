@@ -3,12 +3,11 @@ import type { ReactNode } from "react";
 import { AuthHeader } from "./auth-header";
 import { tasklyLoginURL } from "./config";
 
-type AccountPage = "profile" | "security" | "passkeys";
+type AccountPage = "profile" | "security";
 
 const pages: { id: AccountPage; href: string; label: string }[] = [
   { id: "profile", href: "/profile", label: "アカウント情報" },
   { id: "security", href: "/security", label: "認証設定" },
-  { id: "passkeys", href: "/passkeys", label: "パスキー" },
 ];
 
 export function AccountLayout({ page, children }: { page: AccountPage; children: ReactNode }) {
