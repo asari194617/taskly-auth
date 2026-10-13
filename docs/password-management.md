@@ -1,5 +1,7 @@
 # パスワード管理仕様
 
+認証設定の変更条件は [追加確認の仕様](security-step-up.md) に従います。以下の「ログインから10分以内」は `AUTH_SECURITY_STEP_UP_REQUIRED=0` の条件です。`1` ではログイン時刻に代わり、同じ有効な認証セッションでの追加確認から5分以内を要求します。現在のパスワードや TOTP コードなど、操作固有の確認条件も引き続き必要です。
+
 Status: implemented and verified in development CI; production migration gate remains closed (2026-09-22)
 
 ## 目的
@@ -8,7 +10,7 @@ Status: implemented and verified in development CI; production migration gate re
 
 ## API と画面
 
-- `GET /security` はパスワード設定画面。`GET /auth/password/status` は現在パスワードが設定済みかだけを返す。ハッシュは返さない。
+- UI の `/security?section=password` はパスワード設定画面。`GET /auth/password/status` は現在パスワードが設定済みかだけを返す。ハッシュは返さない。
 - `POST /auth/password` は `current` と `next` の JSON を受ける。認証 UI と完全一致する `Origin`、`X-Auth-UI: 1`、直近10分以内のログインセッションを要求する。
 - 既存のパスワードがある場合は `current` の bcrypt 検証が必須。パスワードがないアカウントは、直近のパスキーまたはメールコード等によるログイン後に追加できる。
 - `next` は空白だけを拒否し、UTF-8で8文字以上、bcrypt の72バイト以下とする。既存の認証処理と同じ bcrypt コストで保存する。
@@ -17,6 +19,6 @@ Status: implemented and verified in development CI; production migration gate re
 
 ## 切り替え条件
 
-本番 `AUTH_MIGRATION_READY=0` では全 API が503。旧 GraphQL `setPassword` と REST 設定更新が旧 DB に書く間は、auth DB に実ユーザーを最終コピーして公開しない。旧書き込み停止、データ照合、Taskly 設定画面からの導線、切り戻し時の新ハッシュ反映を別途確認する。
+本番 `AUTH_MIGRATION_READY=0` では認証・OAuth・内部同期 API が503となる。health と OAuth メタデータは利用できる。旧 GraphQL `setPassword` と REST 設定更新が旧 DB に書く間は、auth DB に実ユーザーを最終コピーして公開しない。旧書き込み停止、データ照合、Taskly 設定画面からの導線、切り戻し時の新ハッシュ反映を別途確認する。
 
 開発 CI は既存パスワードの誤入力拒否、変更後の旧パスワード拒否と新パスワード受理、アクセス・リフレッシュトークンと UI セッションの失効、元のパスワードへの復元を MySQL 上で確認した。内部ステージングは移行ゲートを閉じたままのため、実ユーザーでの操作は未実施。

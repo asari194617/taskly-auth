@@ -1,5 +1,11 @@
 # TOTP management
 
+Settings mutations follow [security step-up](security-step-up.md). The recent-login
+conditions below apply when `AUTH_SECURITY_STEP_UP_REQUIRED=0`. With `1`, a
+verification completed within the last five minutes in the same active session
+replaces the ten-minute login-age requirement. Operation-specific TOTP code
+checks still apply.
+
 TOTP secrets are authoritative in the auth database. Existing encrypted
 `totp_secrets` rows and `TOTP_ENC_KEY` are copied without conversion so an
 existing authenticator continues to produce valid codes.

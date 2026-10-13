@@ -42,7 +42,7 @@ R2 では要求パスと同じオブジェクトキーを返せるよう、ビ�
 | `/login` | `login` | メールアドレス入力 |
 | `/password` | `password` | パスワード入力・別の認証方法の選択 |
 | `/mail-code` | `mail-code` | メールコード入力 |
-| `/mfa` | `mfa` | パスワード後の2段階認証 |
+| `/mfa` | `mfa` | パスワード後の2段階認証・認証設定の追加確認 |
 | `/profile` | `profile` | 表示名とメールアドレス |
 | `/security` | `security` | パスワード、メールコード、復旧コード、TOTP、パスキー管理（`?section=passkeys` を含む） |
 | `/login-history` | `login-history` | ログイン履歴 |
@@ -75,7 +75,7 @@ npm --prefix apps/web run dev
 VITE_AUTH_API_URL=https://taskly-auth-api.iy0306.com npm --prefix apps/web run build
 ```
 
-ビルド検査では、4ページの拡張子なしオブジェクト、ハッシュ付きアセット、API URL が揃い、secret に見える環境変数が参照されていないことを確認する。
+ビルド検査では、上記9ページの拡張子なしオブジェクト、ハッシュ付きアセット、API URL が揃い、secret に見える環境変数が参照されていないことを確認する。
 
 ## R2 と Cloudflare の初回設定
 
@@ -121,7 +121,7 @@ Pull Request では UI の test と build までを実行し、R2 へは書き�
 
 公開 URL の実測では `/` が `/login` へ 302、`/login`、`/security`、`/passkeys`、`/logout` が HTTPS 200 を返した。HTML は `Content-Type: text/html; charset=utf-8` と `Cache-Control: no-cache`、ハッシュ付き JavaScript/CSS は正しい MIME type と `Cache-Control: public, max-age=31536000, immutable` を返した。5種類のセキュリティヘッダーも全経路で確認した。ブラウザーで `/login` を開き、CSP 違反を含む console warning/error がないことを確認した。
 
-認証 API の `/.well-known/oauth-authorization-server` は引き続き 503 と `Retry-After: 3600` を返している。静的 UI の公開では認証 DB のコピー、移行フラグ、Taskly 側 OAuth 設定を変更していない。
+初回 UI デプロイ時点では、認証 API の `/.well-known/oauth-authorization-server` は 503 と `Retry-After: 3600` を返していた。その後 API を公開用 Compose に接続し、health と OAuth メタデータは200、認証・OAuth 操作は503となった（[本番移行手順](production-migration.md)参照）。静的 UI の公開では認証 DB のコピー、移行フラグ、Taskly 側 OAuth 設定を変更していない。
 
 ## セキュリティヘッダー
 

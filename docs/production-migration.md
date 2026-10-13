@@ -1,6 +1,6 @@
 # 本番認証 DB 移行手順
 
-この文書は 2026-09-21 の本番構成に基づきます。Taskly は `infra-db-1` (MySQL 8.4) を使い、認証 API を配置するホストは `133.242.49.12` です。ホストの空きメモリは限られるため、認証 DB は同じ MySQL インスタンス上の別 database として作成し、専用ユーザーと権限で分離します。別 MySQL インスタンスにする場合は容量計画と移行手順を改めて確認します。
+この文書は 2026-09-21 の本番構成を基に、その後の検証記録を日付付きで追記しています。日付付きの件数・公開応答・構成は当時の結果であり、現在の状態は本番作業前に再確認してください。Taskly は `infra-db-1` (MySQL 8.4) を使い、認証 API を配置するホストは `133.242.49.12` です。ホストの空きメモリは限られるため、認証 DB は同じ MySQL インスタンス上の別 database として作成し、専用ユーザーと権限で分離します。別 MySQL インスタンスにする場合は容量計画と移行手順を改めて確認します。
 
 ## 認証 UI の新ホスト名と既存パスキー
 
@@ -59,7 +59,7 @@ API は `issuer` が `https://taskly-auth-api.iy0306.com` の JSON、UI は認�
 
 `scripts/provision-stage.py` は本番ホストで一度だけ実行し、`taskly_auth` database、同 database にだけ権限を持つ専用ユーザー、mode 0600 の `.env.production` を作ります。`users` テーブルは元DBの構造だけを `CREATE TABLE LIKE` で複製します。既存 Taskly コンテナから TOTP 鍵、SMTP 設定、Discord webhook をプロセス内で引き継ぎ、値を標準出力や Git に出しません。既存の `taskly` database とユーザー行は変更せず、認証行はこの段階ではコピーしません。既存の認証 DB や環境ファイルがあれば実行を拒否します。
 
-`compose.stage.yaml` は GitHub Actions で作成したコミット SHA 固定のイメージを内部 Docker ネットワークだけで動かします。手動実行した workflow は同じイメージを 3 日間の非公開 artifact として保存します。これを `gh run download`、SSH 転送、`docker load` で本番ホストに入れます。ホストのポートを公開しないため Nginx は 503 のままです。内部の DB 接続、OAuth メタデータ、Discord 通知を検証した後に限り、移行と書き込み所有権の切り替えに進みます。`compose.prod.yaml` に切り替える前に下記の全ゲートを満たす必要があります。
+`compose.stage.yaml` は GitHub Actions で作成したコミット SHA 固定のイメージを内部 Docker ネットワークだけで動かします。手動実行した workflow は同じイメージを 3 日間の非公開 artifact として保存します。これを `gh run download`、SSH 転送、`docker load` で本番ホストに入れます。ホストのポートを公開しないため Nginx は 503 のままです。内部の DB 接続、OAuth メタデータ、Discord 通知を検証した後に限り、移行と書き込み所有権の切り替えに進みます。`AUTH_MIGRATION_READY=0` のまま `compose.prod.yaml` に接続して health と OAuth メタデータを公開することはできます。認証を有効化する前に下記の全ゲートを満たす必要があります。
 
 2026-09-21 に専用 DB と設定ファイルを作成し、内部ステージングコンテナの health check と OAuth メタデータを確認しました。新 DB の `users` は 0 行で、元 DB のユーザー行は変更していません。公開 FQDN は引き続き HTTPS 503 です。Discord webhook の実送信では既定の HTTP クライアント名が 403 となり、`TasklyAuth/1.0` を指定すると 204 で受理されました。通知コードにこのヘッダーを設定しています。
 DB 接続・スキーマ・設定の起動失敗時は、Discord への送信が完了するか5秒のタイムアウトになるまで待ってからプロセスを終了します。通常のリクエスト中の通知は非同期です。起動失敗経路は単体テスト済みですが、本番 webhook を用いた障害注入は未実施です。コミット `f467c41` のイメージを内部ステージングへ反映し、healthy、`users` 0 行、内部 OAuth 503、公開 UI 503 を再確認しました。
@@ -107,7 +107,7 @@ DB 接続・スキーマ・設定の起動失敗時は、Discord への送信が
 2026-09-21 09:46 UTC にコミット `619acc9` のイメージで元DBと検証DBを再照合し、7テーブルすべての件数と行ハッシュが一致しました。件数は順に `47, 1, 10, 1, 23, 68, 2` です。同じイメージの内部ステージングは healthy、実際の認証DBは0ユーザー、公開 OAuth は TLS 検証成功の503です。元DBの書き込みを停止していないため、この一致は最終コピーや切り替えの承認ではありません。
 
 ```sh
-python3 provision-rehearsal.py
+python3 scripts/provision-rehearsal.py
 docker run --rm --read-only --network infra_default \
   --env-file .env.rehearsal --entrypoint /usr/local/bin/migrate-auth \
   ghcr.io/asari194617/taskly-auth:<verified-commit-sha>
@@ -141,7 +141,7 @@ sudo python3 /home/ubuntu/taskly-auth/scripts/check_release_readiness.py \
 - 旧 Taskly アプリのユーザー・パスワード・TOTP・復旧コード・パスキー更新経路を auth DB に移管する。旧 DB と新 DB の書き込み競合を解消する。
 - 復旧コードの所有権移管時は Taskly API の `AUTH_RECOVERY_EXTERNAL=1` で旧 GraphQL/REST の再発行と旧ログイン経路によるコード消費を拒否する。Web の `PUBLIC_AUTH_RECOVERY_URL=https://auth.taskly.iy0306.com/security` は新 UI 公開後に設定する。
 - TOTP の所有権移管時は Taskly API の `AUTH_TOTP_EXTERNAL=1` で旧 GraphQL/REST の設定変更、方法一覧、旧ログイン経路によるコード検証を拒否する。Web の `PUBLIC_AUTH_TOTP_URL=https://auth.taskly.iy0306.com/security` は新 UI 公開後に設定する。暗号化済み秘密と `TOTP_ENC_KEY` は変換しない。
-- Taskly 側の [`認証データ書き込み経路の棚卸し`](https://github.com/asari194617/taskly/blob/feat/auth-service-extraction/docs/auth-identity-write-inventory.md) にある管理者操作、ブロック、プロフィール、セッション失効も移管または明示的に同期する。
+- Taskly 側の [`認証データ書き込み経路の棚卸し`](https://github.com/asari194617/taskly/blob/main/docs/auth-identity-write-inventory.md) にある管理者操作、ブロック、プロフィール、セッション失効も移管または明示的に同期する。
 - native/public client の PKCE 接続と、Taskly セッション・認証サービスセッションの連携ログアウトを確認する。
 - public client の登録機能は実装済みだが、本番 `OAUTH_PUBLIC_CLIENTS_JSON` は空のままにし、実際の native アプリの redirect URI と端末上でのコールバック検証ができるまで登録しない。
 - 既存の API キー、権限、ユーザー参照、既存セッションを確認する。
