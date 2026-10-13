@@ -1,5 +1,7 @@
 # メールコード許可設定仕様
 
+認証設定の変更条件は [追加確認の仕様](security-step-up.md) に従います。以下の「ログインから10分以内」は `AUTH_SECURITY_STEP_UP_REQUIRED=0` の条件です。`1` ではログイン時刻に代わり、同じ有効な認証セッションでの追加確認から5分以内を要求します。現在のパスワードや TOTP コードなど、操作固有の確認条件も引き続き必要です。
+
 Status: implemented and verified in development CI; production migration gate remains closed (2026-09-22)
 
 ## 目的
