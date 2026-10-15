@@ -50,6 +50,18 @@ func (a *app) syncUserLifecycle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid lifecycle state", http.StatusBadRequest)
 		return
 	}
+	if !*input.Deleted {
+		if err := a.applyRestoredState(r.Context(), userID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "user not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "lifecycle synchronization failed", http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, http.StatusOK, map[string]any{"deleted": false, "deleted_at": nil})
+		return
+	}
 	appliedAt, err := a.applyDeletedState(r.Context(), userID, deletedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -91,8 +103,14 @@ func internalUserID(r *http.Request) (uint64, error) {
 }
 
 func validateLifecycleSync(input lifecycleSyncRequest, now time.Time) (time.Time, error) {
-	if input.Deleted == nil || !*input.Deleted {
-		return time.Time{}, errors.New("deleted must be true")
+	if input.Deleted == nil {
+		return time.Time{}, errors.New("deleted is required")
+	}
+	if !*input.Deleted {
+		if input.DeletedAt != "" {
+			return time.Time{}, errors.New("restoration must not include deleted_at")
+		}
+		return time.Time{}, nil
 	}
 	deletedAt, err := time.Parse(time.RFC3339, input.DeletedAt)
 	if err != nil || deletedAt.After(now) {
@@ -119,6 +137,37 @@ func (a *app) applyDeletedState(ctx context.Context, userID uint64, requestedAt 
 	if _, err := tx.ExecContext(ctx, `UPDATE users SET is_deleted=1,deleted_at=? WHERE id=?`, deletedAt, userID); err != nil {
 		return time.Time{}, err
 	}
+	if err := revokeLifecycleCredentials(ctx, tx, userID, email); err != nil {
+		return time.Time{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return time.Time{}, err
+	}
+	return deletedAt, nil
+}
+
+// applyRestoredState is idempotent and never recreates sessions or tokens.
+// Locking the same row as erasure prevents restoring an already erased account.
+func (a *app) applyRestoredState(ctx context.Context, userID uint64) error {
+	tx, err := a.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var email string
+	if err := tx.QueryRowContext(ctx, `SELECT email FROM users WHERE id=? FOR UPDATE`, userID).Scan(&email); err != nil {
+		return err
+	}
+	if err := revokeLifecycleCredentials(ctx, tx, userID, email); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET is_deleted=0,deleted_at=NULL WHERE id=?`, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func revokeLifecycleCredentials(ctx context.Context, tx *sql.Tx, userID uint64, email string) error {
 	statements := []string{
 		`DELETE FROM sessions WHERE user_id=?`,
 		`DELETE FROM auth_security_codes WHERE user_id=?`,
@@ -133,18 +182,15 @@ func (a *app) applyDeletedState(ctx context.Context, userID uint64, requestedAt 
 	}
 	for _, statement := range statements {
 		if _, err := tx.ExecContext(ctx, statement, userID); err != nil {
-			return time.Time{}, err
+			return err
 		}
 	}
 	for _, table := range []string{"login_codes", "auth_login_codes"} {
 		if _, err := tx.ExecContext(ctx, `UPDATE `+table+` SET consumed_at=COALESCE(consumed_at,UTC_TIMESTAMP()) WHERE email=?`, email); err != nil {
-			return time.Time{}, err
+			return err
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return time.Time{}, err
-	}
-	return deletedAt, nil
+	return nil
 }
 
 func (a *app) eraseDeletedUser(ctx context.Context, userID uint64) error {

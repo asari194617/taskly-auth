@@ -409,10 +409,29 @@ assert json.load(response)["deleted_at"] == deleted_at
 assert ui_json_request("/auth/login", {"email": email, "password": password}).status == 401
 response = internal_lifecycle_request(user_id, {"deleted": True, "deleted_at": deleted_at})
 assert response.status == 200, response.read()
+# Restoration reopens the existing account, requires fresh login, and is retryable.
+response = internal_lifecycle_request(user_id, {"deleted": False})
+assert response.status == 200, response.read()
+assert json.load(response)["deleted"] is False
+assert ui_json_request("/auth/password/status").status == 401
+response = internal_lifecycle_request(user_id, {"deleted": False})
+assert response.status == 200, response.read()
+response = ui_json_request("/auth/login", {"email": email, "password": password})
+assert response.status == 202, response.read()
+restore_challenge = json.load(response)["auth_challenge"]
+response = ui_json_request("/auth/login", {"email": email, "auth_challenge": restore_challenge,
+                                        "recovery_code": second_codes[1]})
+assert response.status == 200, response.read()
+response = internal_lifecycle_request(user_id, {"deleted": True, "deleted_at": deleted_at})
+assert response.status == 200, response.read()
+assert ui_json_request("/auth/password/status").status == 401
 response = internal_lifecycle_request(user_id)
 assert response.status == 204, response.read()
 response = internal_lifecycle_request(user_id)
 assert response.status == 204, response.read()
+
+response = internal_lifecycle_request(user_id, {"deleted": False})
+assert response.status == 404, response.read()
 
 projection_email = "projection-smoke@example.test"
 response = internal_user_request("POST", "/internal/users", {
