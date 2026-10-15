@@ -20,4 +20,12 @@ Status: implemented behind migration gate; existing-passkey device login verifie
 
 ## 失敗と展開
 
+### iOS Google アプリ内からのログイン
+
+Google アプリ内の WebView では WebAuthn API が存在してもパスキーを利用できない場合がある。iOS の Google アプリ（`GSA/`）では `PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()` も確認し、未対応・確認失敗時はパスキーボタンを無効にしてパスワード・メールコードと Safari の案内を表示する。利用可能と報告された場合はパスキーを使えるままとし、実際の端末認証が失敗した場合にも Safari の案内を表示する。他のブラウザではプラットフォーム認証器がなくても外部セキュリティキーを使えるため、この追加判定では無効にしない。
+
+Safari へ渡すリンクは Taskly の `/login` に固定する。アプリ内で開始した OAuth 要求やメールアドレス・追加認証チャレンジはコピーしない。Cookie が共有されない別ブラウザでは OAuth を Taskly から新しく開始する必要がある。クリップボード API が拒否された場合もリンクの長押しによるコピーを案内する。
+
+実端末で Google アプリ内の案内とリンクコピー、Safari での新しいログイン、Google アプリ内のパスワード・メールコードと必要な2段階認証を確認する。ブラウザの User-Agent や WebAuthn 応答を置き換えた自動テストは、実機でのパスキー認証成功を保証しない。
+
 パスキー登録の署名・origin・RP ID・チャレンジ不一致は登録を拒否する。DB 保存エラーは Discord に通知し、ユーザーに公開鍵や秘密情報を返さない。既存パスキーの認証・登録は開発環境の CI と内部ステージングで確認する。2026-09-25 に隔離 DB の既存パスキーで新 origin からの実端末ログインを確認した（[検証記録](production-migration.md)）。新規登録・管理の実端末検証と、旧 Taskly 設定画面から新管理画面への導線は公開切り替え前に確認する。旧 API のパスキー登録・名前変更・削除・署名カウンタ更新を停止または auth DB 側へ移管するまで、本番の認証データはコピーせず公開503を維持する。
