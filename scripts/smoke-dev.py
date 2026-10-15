@@ -409,10 +409,24 @@ assert json.load(response)["deleted_at"] == deleted_at
 assert ui_json_request("/auth/login", {"email": email, "password": password}).status == 401
 response = internal_lifecycle_request(user_id, {"deleted": True, "deleted_at": deleted_at})
 assert response.status == 200, response.read()
+# Restoration reopens the existing account and keeps its old session invalid.
+# Fresh login is covered by the isolated MySQL test to avoid this fixture's login rate limit.
+response = internal_lifecycle_request(user_id, {"deleted": False})
+assert response.status == 200, response.read()
+assert json.load(response)["deleted"] is False
+assert ui_json_request("/auth/password/status").status == 401
+response = internal_lifecycle_request(user_id, {"deleted": False})
+assert response.status == 200, response.read()
+response = internal_lifecycle_request(user_id, {"deleted": True, "deleted_at": deleted_at})
+assert response.status == 200, response.read()
+assert ui_json_request("/auth/password/status").status == 401
 response = internal_lifecycle_request(user_id)
 assert response.status == 204, response.read()
 response = internal_lifecycle_request(user_id)
 assert response.status == 204, response.read()
+
+response = internal_lifecycle_request(user_id, {"deleted": False})
+assert response.status == 404, response.read()
 
 projection_email = "projection-smoke@example.test"
 response = internal_user_request("POST", "/internal/users", {

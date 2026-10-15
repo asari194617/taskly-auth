@@ -20,7 +20,8 @@ func TestValidateLifecycleSync(t *testing.T) {
 	}{
 		{name: "deleted", input: lifecycleSyncRequest{Deleted: &truth, DeletedAt: "2026-09-24T00:00:00+09:00"}, want: time.Date(2026, 9, 23, 15, 0, 0, 0, time.UTC)},
 		{name: "missing deleted", input: lifecycleSyncRequest{DeletedAt: "2026-09-24T00:00:00Z"}, wantError: true},
-		{name: "restore", input: lifecycleSyncRequest{Deleted: &falsehood, DeletedAt: "2026-09-24T00:00:00Z"}, wantError: true},
+		{name: "restore", input: lifecycleSyncRequest{Deleted: &falsehood}},
+		{name: "restore with deletion date", input: lifecycleSyncRequest{Deleted: &falsehood, DeletedAt: "2026-09-24T00:00:00Z"}, wantError: true},
 		{name: "invalid time", input: lifecycleSyncRequest{Deleted: &truth, DeletedAt: "today"}, wantError: true},
 		{name: "future", input: lifecycleSyncRequest{Deleted: &truth, DeletedAt: now.Add(time.Second).Format(time.RFC3339)}, wantError: true},
 	}
