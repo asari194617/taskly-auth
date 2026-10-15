@@ -14,6 +14,7 @@ import { clearFlow, loadFlow, saveFlow, securityDetailSection, securityDetailURL
 import type { StepUpMethod, StepUpStatus } from "./security-step-up";
 import { isIOSGoogleApp, passkeySupport, type PasskeySupport } from "./passkey-support";
 import { PasskeyBrowserHelp } from "./passkey-browser-help";
+import { reportAuthError } from "./telemetry";
 
 type Step = "email" | "password" | "mail-code" | "mfa";
 interface LoginPayload { mfa_required?: boolean; auth_challenge?: string }
@@ -63,7 +64,10 @@ function LoginApp() {
 
   useEffect(() => {
     if (step !== "password") return;
-    void passkeySupport(navigator.userAgent, !!navigator.credentials?.get, window.PublicKeyCredential).then(setPasskeyAvailability);
+    void passkeySupport(navigator.userAgent, !!navigator.credentials?.get, window.PublicKeyCredential).then((availability) => {
+      setPasskeyAvailability(availability);
+      if (availability !== "available") reportAuthError("passkey.support", { name: "Unavailable" });
+    });
   }, []);
 
   function afterLogin(current: LoginFlow) {
@@ -111,7 +115,7 @@ function LoginApp() {
       } else if (step === "password") await signIn({ password });
       else if (step === "mail-code") await signIn({ code: factor });
       else await signIn({ [method === "recovery" ? "recovery_code" : method]: factor });
-    } catch { setError(tr("通信に失敗しました。", "The request failed. Please try again.")); }
+    } catch (cause) { reportAuthError("login.submit", cause); setError(tr("通信に失敗しました。", "The request failed. Please try again.")); }
     finally { setBusyAction(null); }
   }
 
@@ -120,10 +124,10 @@ function LoginApp() {
     setError(""); setNotice(""); setBusyAction("send-code");
     try {
       const response = await request("/auth/request-code", { email: flow.email });
-      if (!response.ok) throw new Error("request failed");
+      if (!response.ok) throw response;
       if (destination) location.assign(destination);
       else setNotice(tr("メールコードを送信しました。", "Email code sent."));
-    } catch { setError(tr("コードを送信できませんでした。", "Could not send the code.")); }
+    } catch (cause) { reportAuthError("email-code.send", cause, cause instanceof Response ? { status: cause.status, endpoint: "/auth/request-code" } : {}); setError(tr("コードを送信できませんでした。", "Could not send the code.")); }
     finally { setBusyAction(null); }
   }
 
@@ -132,9 +136,10 @@ function LoginApp() {
     setError("");
     if (!navigator.credentials?.get) { setError(tr("このブラウザはパスキーに対応していません。", "This browser does not support passkeys.")); return; }
     setBusyAction("passkey");
+    let stage: "passkey.begin" | "passkey.credential" | "passkey.finish" = "passkey.begin";
     try {
       const beginResponse = await request("/auth/passkey/begin", { email: flow.email });
-      if (!beginResponse.ok) throw new Error("begin failed");
+      if (!beginResponse.ok) throw beginResponse;
       const begin = await json<PasskeyBeginPayload>(beginResponse);
       const source = begin.options.publicKey;
       const publicKey = {
@@ -145,6 +150,7 @@ function LoginApp() {
         })),
       } as unknown as PublicKeyCredentialRequestOptions;
       let credential: PublicKeyCredential | null;
+      stage = "passkey.credential";
       try {
         credential = await navigator.credentials.get({ publicKey }) as PublicKeyCredential | null;
       } catch (cause) {
@@ -154,6 +160,7 @@ function LoginApp() {
       }
       if (!credential) throw new Error("no credential");
       const assertion = credential.response as AuthenticatorAssertionResponse;
+      stage = "passkey.finish";
       const finishResponse = await request("/auth/passkey/finish", {
         request_id: begin.request_id,
         credential: {
@@ -167,9 +174,12 @@ function LoginApp() {
           clientExtensionResults: credential.getClientExtensionResults(),
         },
       });
-      if (!finishResponse.ok) throw new Error("finish failed");
+      if (!finishResponse.ok) throw finishResponse;
       afterLogin(flow);
-    } catch { setError(tr("パスキーで認証できませんでした。別の方法をお試しください。", "Could not sign in with your passkey. Please try another method.")); }
+    } catch (cause) {
+      reportAuthError(stage, cause, cause instanceof Response ? { status: cause.status, endpoint: stage === "passkey.begin" ? "/auth/passkey/begin" : "/auth/passkey/finish" } : {});
+      setError(tr("パスキーで認証できませんでした。別の方法をお試しください。", "Could not sign in with your passkey. Please try another method."));
+    }
     finally { setBusyAction(null); }
   }
 
