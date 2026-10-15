@@ -12,6 +12,8 @@ import { LocaleRoot, tr, useLocale } from "./i18n";
 import { BusyLabel, LoadingStatus } from "./loading";
 import { clearFlow, loadFlow, saveFlow, securityDetailSection, securityDetailURL, securityLoginURL, startFlow, type LoginFlow, type SecurityDetailSection } from "./login-flow";
 import type { StepUpMethod, StepUpStatus } from "./security-step-up";
+import { isIOSGoogleApp, passkeySupport, type PasskeySupport } from "./passkey-support";
+import { PasskeyBrowserHelp } from "./passkey-browser-help";
 
 type Step = "email" | "password" | "mail-code" | "mfa";
 interface LoginPayload { mfa_required?: boolean; auth_challenge?: string }
@@ -54,7 +56,15 @@ function LoginApp() {
   const [busyAction, setBusyAction] = useState<"submit" | "send-code" | "passkey" | null>(null);
   const busy = busyAction !== null;
   const [restart, setRestart] = useState(false);
+  const [passkeyAvailability, setPasskeyAvailability] = useState<PasskeySupport | "checking">("checking");
+  const [passkeyBrowserHelp, setPasskeyBrowserHelp] = useState(false);
+  const showPasskeyBrowserHelp = passkeyAvailability === "ios-google-app" || passkeyBrowserHelp;
   const invalid = !flow || (step !== "email" && !flow.email) || (step === "mfa" && !flow.challenge);
+
+  useEffect(() => {
+    if (step !== "password") return;
+    void passkeySupport(navigator.userAgent, !!navigator.credentials?.get, window.PublicKeyCredential).then(setPasskeyAvailability);
+  }, []);
 
   function afterLogin(current: LoginFlow) {
     const target = current.next === "security" ? securityDetailURL(current.nextSection || null)
@@ -118,7 +128,7 @@ function LoginApp() {
   }
 
   async function passkeyLogin() {
-    if (!flow || busy) return;
+    if (!flow || busy || passkeyAvailability !== "available") return;
     setError("");
     if (!navigator.credentials?.get) { setError(tr("このブラウザはパスキーに対応していません。", "This browser does not support passkeys.")); return; }
     setBusyAction("passkey");
@@ -134,7 +144,14 @@ function LoginApp() {
           transports: item.transports as AuthenticatorTransport[] | undefined,
         })),
       } as unknown as PublicKeyCredentialRequestOptions;
-      const credential = await navigator.credentials.get({ publicKey }) as PublicKeyCredential | null;
+      let credential: PublicKeyCredential | null;
+      try {
+        credential = await navigator.credentials.get({ publicKey }) as PublicKeyCredential | null;
+      } catch (cause) {
+        // Some embedded browsers report availability but reject the ceremony.
+        if (isIOSGoogleApp(navigator.userAgent)) setPasskeyBrowserHelp(true);
+        throw cause;
+      }
       if (!credential) throw new Error("no credential");
       const assertion = credential.response as AuthenticatorAssertionResponse;
       const finishResponse = await request("/auth/passkey/finish", {
@@ -178,7 +195,13 @@ function LoginApp() {
         {method === "code" && <Button id="mfa-send-code" type="button" onClick={() => void sendCode()} disabled={busy}><BusyLabel busy={busyAction === "send-code"}>{tr("メールコードを送信", "Send email code")}</BusyLabel></Button>}</>}
       <div className="actions"><Button id="submit" type="submit" variant="Primary" fullWidth disabled={busy}><BusyLabel busy={busyAction === "submit"}>{step === "email" ? tr("次へ", "Next") : step === "mfa" ? tr("認証してログイン", "Verify and sign in") : tr("ログイン", "Sign in")}</BusyLabel></Button></div>
     </form>}
-    {!invalid && step === "password" && <div className="alternative-actions"><p>{tr("別の方法でログイン", "Sign in another way")}</p><Button id="send-code" type="button" fullWidth onClick={() => void sendCode("/mail-code")} disabled={busy}><BusyLabel busy={busyAction === "send-code"}>{tr("メールコードを送信", "Send email code")}</BusyLabel></Button><Button id="passkey" type="button" fullWidth onClick={() => void passkeyLogin()} disabled={busy}><BusyLabel busy={busyAction === "passkey"}>{tr("パスキーを使う", "Use a passkey")}</BusyLabel></Button></div>}
+    {!invalid && step === "password" && <div className="alternative-actions">
+      <p>{tr("別の方法でログイン", "Sign in another way")}</p>
+      <Button id="send-code" type="button" fullWidth onClick={() => void sendCode("/mail-code")} disabled={busy}><BusyLabel busy={busyAction === "send-code"}>{tr("メールコードを送信", "Send email code")}</BusyLabel></Button>
+      <Button id="passkey" type="button" fullWidth onClick={() => void passkeyLogin()} disabled={busy || passkeyAvailability !== "available"} aria-describedby={showPasskeyBrowserHelp ? "passkey-browser-help" : passkeyAvailability === "unavailable" ? "passkey-unavailable" : undefined}><BusyLabel busy={busyAction === "passkey"}>{tr("パスキーを使う", "Use a passkey")}</BusyLabel></Button>
+      {showPasskeyBrowserHelp && <PasskeyBrowserHelp />}
+      {passkeyAvailability === "unavailable" && <p id="passkey-unavailable">{tr("このブラウザはパスキーに対応していません。別の方法でログインしてください。", "This browser does not support passkeys. Sign in using another method.")}</p>}
+    </div>}
     {!invalid && step === "mail-code" && <div className="alternative-actions"><Button id="resend-code" type="button" fullWidth onClick={() => void sendCode()} disabled={busy}><BusyLabel busy={busyAction === "send-code"}>{tr("コードを再送信", "Resend code")}</BusyLabel></Button><a href="/password">{tr("パスワード入力に戻る", "Return to password entry")}</a></div>}
     {!invalid && step === "mfa" && <p className="footer-note"><a href="/password">{tr("パスワード入力に戻る", "Return to password entry")}</a></p>}
     <AuthFooter />
