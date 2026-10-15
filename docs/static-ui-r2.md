@@ -54,13 +54,18 @@ R2 では要求パスと同じオブジェクトキーを返せるよう、ビ�
 
 ## ビルド
 
-必要な公開ビルド変数は一つだけである。
+API の送信先と Sentry の公開ビルド設定は次のとおり。
 
 ```dotenv
 VITE_AUTH_API_URL=http://localhost:3067
+VITE_SENTRY_DSN=
+VITE_SENTRY_ENVIRONMENT=development
+VITE_SENTRY_RELEASE=
 ```
 
-本番 Actions は `VITE_AUTH_API_URL=https://taskly-auth-api.iy0306.com` を固定してビルドする。`VITE_` で始まる値はブラウザーへ公開されるため、secret を指定してはいけない。
+本番 Actions は `VITE_AUTH_API_URL=https://taskly-auth-api.iy0306.com`、`VITE_SENTRY_ENVIRONMENT=production`、`VITE_SENTRY_RELEASE=taskly-auth-ui@<commit SHA>` を指定する。`production-ui` environment の variable `VITE_SENTRY_DSN` に既存 Taskly プロジェクトの**公開 DSN**を設定する。空の場合、本番デプロイは停止する。DSN の secret key や Sentry auth token は設定しない。`VITE_` で始まる値はブラウザーへ公開されるため、secret を指定してはいけない。ローカル・PR 検証は DSN 未設定で通知を停止できる。
+
+Sentry に送る認証 UI イベントの内容と確認方法は [認証 UI のエラー監視](auth-ui-error-monitoring.md)を参照する。
 
 ローカルではリポジトリのルートから次を実行する。
 
@@ -128,7 +133,7 @@ Pull Request では UI の test と build までを実行し、R2 へは書き�
 R2 の custom domain に Cloudflare Response Header Transform Rules を設定する。
 
 ```text
-Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; connect-src https://taskly-auth-api.iy0306.com; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
+Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; connect-src https://taskly-auth-api.iy0306.com https://o4510197265989632.ingest.us.sentry.io; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
 Referrer-Policy: no-referrer
 X-Content-Type-Options: nosniff
 X-Frame-Options: DENY
