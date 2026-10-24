@@ -14,6 +14,8 @@ services:
       AUTH_MIGRATION_READY: "0"
     networks:
       - taskly
+    volumes:
+      - ./geoip:/geoip:ro
     restart: unless-stopped
     read_only: true
     security_opt:
