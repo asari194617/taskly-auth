@@ -1,6 +1,6 @@
 module github.com/asari194617/taskly-auth
 
-go 1.25.0
+go 1.26.10
 
 require (
 	github.com/go-sql-driver/mysql v1.10.0
