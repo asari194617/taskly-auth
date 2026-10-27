@@ -6,7 +6,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -o /out/auth ./cmd/auth
 RUN CGO_ENABLED=0 go build -trimpath -o /out/migrate-auth ./cmd/migrate-auth
 
-FROM alpine:3.22
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates
 COPY --from=build /out/auth /usr/local/bin/auth
 COPY --from=build /out/migrate-auth /usr/local/bin/migrate-auth
