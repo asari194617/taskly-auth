@@ -13,7 +13,7 @@
     "deploy:r2": "node scripts/deploy-r2.mjs"
   },
   "devDependencies": {
-    "@aws-sdk/client-s3": "^3.888.0",
+    "@aws-sdk/client-s3": "^3.1156.0",
     "@types/node": "^22.18.1",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
@@ -21,12 +21,12 @@
     "vite": "^7.1.5"
   },
   "dependencies": {
-    "@charcoal-ui/react": "^6.2.0",
-    "@charcoal-ui/theme": "^6.2.0",
-    "@sentry/browser": "^11.8.0",
-    "react": "^19.3.0",
-    "react-aria": "^3.52.1",
-    "react-dom": "^19.3.0",
+    "@charcoal-ui/react": "^6.3.0",
+    "@charcoal-ui/theme": "^6.3.0",
+    "@sentry/browser": "^11.9.0",
+    "react": "^19.3.1",
+    "react-aria": "^3.53.1",
+    "react-dom": "^19.3.1",
     "react-stately": "^3.50.0"
   }
 }
