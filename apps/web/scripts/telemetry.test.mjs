@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { stripTypeScriptTypes } from "node:module";
 import test from "node:test";
-import ts from "typescript";
 
-const compile = (source) => ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText;
+const compile = (source) => stripTypeScriptTypes(source, { mode: "strip" });
 const dataURL = (source) => `data:text/javascript,${encodeURIComponent(source)}`;
 const events = dataURL(compile(await readFile(new URL("../src/auth-error-event.ts", import.meta.url), "utf8")));
 const source = compile(await readFile(new URL("../src/telemetry.ts", import.meta.url), "utf8"));
