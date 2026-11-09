@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { stripTypeScriptTypes } from "node:module";
 import test from "node:test";
-import ts from "typescript";
 
 const source = await readFile(new URL("../src/login-flow.ts", import.meta.url), "utf8");
-const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText;
+const compiled = stripTypeScriptTypes(source, { mode: "strip" });
 const { startFlow, loadFlow, saveFlow, clearFlow, securityDetailSection, securityDetailURL, securityLoginURL, securityMfaURL } = await import(`data:text/javascript,${encodeURIComponent(compiled)}`);
 const storage = () => {
   const values = new Map();

@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { stripTypeScriptTypes } from "node:module";
 import test from "node:test";
-import ts from "typescript";
 
 const source = await readFile(new URL("../src/passkey-support.ts", import.meta.url), "utf8");
-const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText;
+const compiled = stripTypeScriptTypes(source, { mode: "strip" });
 const { passkeySupport } = await import(`data:text/javascript,${encodeURIComponent(compiled)}`);
 const iphone = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6_2 like Mac OS X) AppleWebKit/605.1.15";
 const gsa = `${iphone} GSA/441.5.989047059 Mobile/15E148 Safari/604.1`;
