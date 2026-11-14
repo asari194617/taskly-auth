@@ -156,10 +156,7 @@ func (a *app) exchangeMCPToken(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 400, "invalid_grant")
 		return
 	}
-	expires := time.Now().UTC().Add(time.Minute)
-	if parent.expires.Before(expires) {
-		expires = parent.expires
-	}
+	expires := mcpExchangeExpiry(time.Now(), parent.expires)
 	seconds := int64(time.Until(expires) / time.Second)
 	if seconds < 1 {
 		oauthError(w, 400, "invalid_grant")
@@ -176,6 +173,16 @@ func (a *app) exchangeMCPToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, 200, map[string]any{"access_token": token, "token_type": "Bearer", "issued_token_type": mcpAccessTokenType, "expires_in": seconds, "scope": scope})
+}
+
+func mcpExchangeExpiry(now, parentExpiry time.Time) time.Time {
+	expires := now.UTC().Add(time.Minute)
+	if parentExpiry.Before(expires) {
+		expires = parentExpiry
+	}
+	// DATETIME(0) rounds fractional seconds on insert. Floor before storage so
+	// the persisted/introspected deadline never exceeds either lifetime bound.
+	return expires.UTC().Truncate(time.Second)
 }
 
 func (a *app) introspectWithMCP(w http.ResponseWriter, r *http.Request) {
