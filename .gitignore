@@ -6,3 +6,4 @@ bin/
 __pycache__/
 apps/web/dist/
 apps/web/node_modules/
+mcp-coverage.*

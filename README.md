@@ -143,4 +143,5 @@ native アプリの実装はこのリポジトリにありません。本番ク�
 | 本番運用 | [移行・検証・バックアップ・切り戻し](docs/production-migration.md)、[UI の R2 配信](docs/static-ui-r2.md) |
 | アカウント | [プロフィールの所有権](docs/account-profile-ownership.md)、[ユーザー作成・同期](docs/user-provisioning-sync.md)、[退会・消去](docs/account-lifecycle-sync.md)、[ブロック同期](docs/block-sync.md) |
 | 認証設定 | [追加確認](docs/security-step-up.md)、[パスワード](docs/password-management.md)、[メールコード](docs/email-code-settings.md)、[パスキー](docs/passkey-management.md)、[TOTP](docs/totp-management.md)、[復旧コード](docs/recovery-code-management.md) |
+| 外部連携 | [ChatGPT 企業ガイダンスの resource・scope・同意・token exchange](docs/guidance-mcp-oauth.md) |
 | メール・履歴 | [認証メール](docs/email-compose.md)、[ログイン履歴・CSV・IP と位置の信頼境界](docs/login-history.md) |
