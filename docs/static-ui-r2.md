@@ -46,6 +46,7 @@ R2 では要求パスと同じオブジェクトキーを返せるよう、ビ�
 | `/profile` | `profile` | 表示名とメールアドレス |
 | `/security` | `security` | パスワード、メールコード、復旧コード、TOTP、パスキー管理（`?section=passkeys` を含む） |
 | `/login-history` | `login-history` | ログイン履歴 |
+| `/consent` | `consent` | ChatGPT 連携の権限確認と許可・拒否 |
 | `/passkeys` | `passkeys` | 旧リンクから `/security?section=passkeys` への互換転送 |
 | `/logout` | `logout` | 認証サービスのセッション失効 |
 | `/assets/*` | `assets/*` | ハッシュ付き JavaScript と CSS |

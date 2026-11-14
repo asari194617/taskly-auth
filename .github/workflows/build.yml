@@ -36,6 +36,79 @@ jobs:
       - run: npm run build
         env:
           VITE_AUTH_API_URL: https://taskly-auth-api.iy0306.com
+  mcp-oauth-integration:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: isolated_mcp_ci_root
+          MYSQL_DATABASE: taskly_auth_mcp_test
+          MYSQL_USER: mcp_test
+          MYSQL_PASSWORD: isolated_mcp_ci_password
+          TZ: UTC
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --host=127.0.0.1 --silent"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run OAuth unit and real MySQL integration tests
+        env:
+          AUTH_MCP_TEST_DSN: mcp_test:isolated_mcp_ci_password@tcp(127.0.0.1:3306)/taskly_auth_mcp_test?parseTime=true&charset=utf8mb4&loc=UTC
+        run: go test -race -count=1 -coverprofile=mcp-coverage.out ./...
+      - name: Report and check MCP OAuth coverage
+        run: python3 scripts/check-mcp-coverage.py mcp-coverage.out
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: mcp-oauth-coverage
+          path: |
+            mcp-coverage.out
+            mcp-coverage.md
+            mcp-coverage.json
+          retention-days: 7
+  mcp-coverage-comment:
+    if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    needs: [mcp-oauth-integration]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      pull-requests: write
+    steps:
+      # The privileged reporting job never checks out or executes PR code.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        continue-on-error: true
+        with:
+          name: mcp-oauth-coverage
+          path: reports
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const fs = require('node:fs');
+            const {owner, repo} = context.repo;
+            const source = context.payload.pull_request;
+            const {data: current} = await github.rest.pulls.get({owner, repo, pull_number: source.number});
+            if (current.state !== 'open' || current.head.sha !== source.head.sha) return;
+            let result;
+            try {
+              if (fs.statSync('reports/mcp-coverage.json').size > 1024) throw new Error('Oversized report');
+              result = JSON.parse(fs.readFileSync('reports/mcp-coverage.json', 'utf8'));
+              for (const name of ['mcp', 'overall']) {
+                if (typeof result[name] !== 'number' || !Number.isFinite(result[name]) || result[name] < 0 || result[name] > 100) throw new Error('Invalid coverage');
+              }
+            } catch { core.warning('Coverage report unavailable'); return; }
+            const marker = '<!-- taskly-auth-mcp-coverage -->';
+            const body = `${marker}\n### OAuth test coverage\n\n| Scope | Statements |\n| --- | ---: |\n| New MCP OAuth | ${result.mcp.toFixed(1)}% |\n| Complete Go module | ${result.overall.toFixed(1)}% |\n\nNew MCP OAuth requires 80%. Includes unit tests and real MySQL consent, PKCE, refresh, token exchange, and revocation tests.\n\nCommit: ${source.head.sha.slice(0, 7)}`;
+            const comments = await github.paginate(github.rest.issues.listComments, {owner, repo, issue_number: source.number, per_page: 100});
+            const previous = comments.find(comment => comment.user?.type === 'Bot' && comment.body?.includes(marker));
+            if (previous) await github.rest.issues.updateComment({owner, repo, comment_id: previous.id, body});
+            else await github.rest.issues.createComment({owner, repo, issue_number: source.number, body});
   oauth-smoke:
     runs-on: ubuntu-latest
     steps:
@@ -57,7 +130,7 @@ jobs:
           # Existing login history predates IP, location, and device columns.
           docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -e "ALTER TABLE auth_login_history DROP COLUMN ip_address, DROP COLUMN geo_city, DROP COLUMN geo_region, DROP COLUMN geo_country, DROP COLUMN user_agent, DROP COLUMN ip_source, DROP COLUMN geo_source, DROP COLUMN geo_db_release, DROP COLUMN geo_db_sha256"'
           docker compose up -d --build auth ui
-          for attempt in $(seq 1 90); do
+          for _attempt in $(seq 1 90); do
             if curl -fsS http://localhost:3067/healthz && curl -fsS http://localhost:3068/login >/dev/null; then
               break
             fi
@@ -90,7 +163,7 @@ jobs:
         run: docker compose down -v
   image:
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    needs: [test, ui]
+    needs: [test, ui, oauth-smoke, mcp-oauth-integration]
     runs-on: ubuntu-latest
     permissions:
       contents: read

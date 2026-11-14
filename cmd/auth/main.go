@@ -22,6 +22,7 @@ type app struct {
 	clientSecret            string
 	redirectURI             string
 	publicClients           map[string]string
+	mcp                     *mcpOAuthConfig
 	secure                  bool
 	ready                   bool
 	alerts                  *alerter
@@ -99,6 +100,13 @@ func main() {
 		alerts.sendSync("Taskly auth startup failed: public client registration invalid")
 		log.Fatal(err)
 	}
+	a.mcp, err = parseMCPOAuthConfig(env("OAUTH_MCP_ENABLED", "0"), os.Getenv("OAUTH_MCP_REDIRECT_URI"), os.Getenv("OAUTH_MCP_RESOURCE"), os.Getenv("OAUTH_MCP_TASKLY_RESOURCE"), os.Getenv("OAUTH_MCP_BACKEND_SECRET"), env("NODE_ENV", "development") == "production")
+	if err != nil {
+		log.Fatal("MCP OAuth configuration invalid")
+	}
+	if a.mcp != nil && (a.clientID == mcpPublicClientID || a.clientID == mcpBackendClientID || a.publicClients[mcpPublicClientID] != "" || a.publicClients[mcpBackendClientID] != "") {
+		log.Fatal("MCP OAuth client IDs must have dedicated policies")
+	}
 	a.secure = strings.HasPrefix(a.issuer, "https://")
 	a.ready = env("NODE_ENV", "development") != "production" || os.Getenv("AUTH_MIGRATION_READY") == "1"
 	if rpID := os.Getenv("WEBAUTHN_RP_ID"); rpID != "" {
@@ -136,6 +144,8 @@ func main() {
 	api.HandleFunc("GET /healthz", a.health)
 	api.HandleFunc("GET /.well-known/oauth-authorization-server", a.metadata)
 	api.HandleFunc("GET /oauth/authorize", a.authorize)
+	api.HandleFunc("GET /oauth/consent", a.consent)
+	api.HandleFunc("POST /oauth/consent", a.approveConsent)
 	api.HandleFunc("POST /oauth/token", a.token)
 	api.HandleFunc("POST /oauth/introspect", a.introspect)
 	api.HandleFunc("POST /oauth/revoke", a.revoke)

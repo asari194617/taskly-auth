@@ -24,7 +24,13 @@ type authorizationRequest struct {
 
 func (a *app) metadata(w http.ResponseWriter, r *http.Request) {
 	authMethods := []string{"client_secret_basic"}
-	if len(a.publicClients) != 0 {
+	grants := []string{"authorization_code", "refresh_token"}
+	scopes := []string{"taskly:login"}
+	if a.mcp != nil {
+		grants = append(grants, mcpExchangeGrant)
+		scopes = append(scopes, "guidance:read", "guidance:bookmarks:write", "guidance:tasks:write")
+	}
+	if len(a.publicClients) != 0 || a.mcp != nil {
 		authMethods = append(authMethods, "none")
 	}
 	jsonResponse(w, 200, map[string]any{
@@ -35,7 +41,8 @@ func (a *app) metadata(w http.ResponseWriter, r *http.Request) {
 		"revocation_endpoint":                   a.issuer + "/oauth/revoke",
 		"userinfo_endpoint":                     a.issuer + "/oauth/userinfo",
 		"response_types_supported":              []string{"code"},
-		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
+		"grant_types_supported":                 grants,
+		"scopes_supported":                      scopes,
 		"code_challenge_methods_supported":      []string{"S256"},
 		"token_endpoint_auth_methods_supported": authMethods,
 	})
@@ -44,8 +51,16 @@ func (a *app) metadata(w http.ResponseWriter, r *http.Request) {
 func (a *app) authorize(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	requestID := r.URL.Query().Get("request_id")
+	if requestID == "" && r.URL.Query().Get("client_id") == mcpPublicClientID {
+		a.authorizeMCP(w, r)
+		return
+	}
 	if requestID == "" {
 		q := r.URL.Query()
+		if len(q["resource"]) != 0 {
+			oauthError(w, 400, "invalid_target")
+			return
+		}
 		if !a.registeredRedirect(q.Get("client_id"), q.Get("redirect_uri")) || q.Get("response_type") != "code" || q.Get("code_challenge_method") != "S256" || !challengePattern.MatchString(q.Get("code_challenge")) || len(q.Get("state")) < 16 || len(q.Get("state")) > 1024 || q.Get("scope") != "taskly:login" {
 			oauthError(w, 400, "invalid_request")
 			return
@@ -72,6 +87,10 @@ func (a *app) authorize(w http.ResponseWriter, r *http.Request) {
 	err := a.db.QueryRowContext(ctx, `SELECT client_id,redirect_uri,state_value,code_challenge,scope_value,expires_at FROM oauth_authorization_requests WHERE id_hash=?`, digest(requestID)).Scan(&req.clientID, &req.redirectURI, &req.state, &req.challenge, &req.scope, &req.expires)
 	if err != nil || time.Now().UTC().After(req.expires) || !a.registeredRedirect(req.clientID, req.redirectURI) {
 		oauthError(w, 400, "invalid_request")
+		return
+	}
+	if req.clientID == mcpPublicClientID {
+		a.resumeMCPAuthorization(w, r, requestID)
 		return
 	}
 	userID, ok := a.sessionUser(r)
@@ -130,8 +149,27 @@ func (a *app) token(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 400, "invalid_request")
 		return
 	}
+	if r.Form.Get("grant_type") == mcpExchangeGrant {
+		a.exchangeMCPToken(w, r)
+		return
+	}
 	clientID, ok := a.authenticateTokenClient(w, r)
 	if !ok {
+		return
+	}
+	if clientID == mcpPublicClientID {
+		switch r.Form.Get("grant_type") {
+		case "authorization_code":
+			a.exchangeMCPCode(w, r)
+		case "refresh_token":
+			a.refreshMCP(w, r)
+		default:
+			oauthError(w, 400, "unsupported_grant_type")
+		}
+		return
+	}
+	if len(r.Form["resource"]) != 0 {
+		oauthError(w, 400, "invalid_target")
 		return
 	}
 	switch r.Form.Get("grant_type") {
@@ -151,6 +189,9 @@ func (a *app) authenticateTokenClient(w http.ResponseWriter, r *http.Request) (s
 		}
 	} else if r.Header.Get("Authorization") == "" && r.Form.Get("client_secret") == "" {
 		id := r.Form.Get("client_id")
+		if a.mcp != nil && id == mcpPublicClientID {
+			return id, true
+		}
 		if _, registered := a.publicClients[id]; registered {
 			return id, true
 		}
@@ -293,6 +334,10 @@ func (a *app) refresh(w http.ResponseWriter, r *http.Request, authenticatedClien
 }
 
 func (a *app) introspect(w http.ResponseWriter, r *http.Request) {
+	if a.mcp != nil {
+		a.introspectWithMCP(w, r)
+		return
+	}
 	if !a.authenticateClient(w, r) {
 		return
 	}
@@ -301,7 +346,7 @@ func (a *app) introspect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID, clientID, scope, expires, ok := a.accessToken(r.Context(), r.Form.Get("token"))
-	if !ok {
+	if !ok || clientID == mcpPublicClientID || clientID == mcpBackendClientID {
 		jsonResponse(w, 200, map[string]bool{"active": false})
 		return
 	}
@@ -355,8 +400,8 @@ func (a *app) userinfo(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 401, "invalid_token")
 		return
 	}
-	userID, _, _, _, ok := a.accessToken(r.Context(), parts[1])
-	if !ok {
+	userID, clientID, _, _, ok := a.accessToken(r.Context(), parts[1])
+	if !ok || clientID == mcpPublicClientID || clientID == mcpBackendClientID {
 		oauthError(w, 401, "invalid_token")
 		return
 	}

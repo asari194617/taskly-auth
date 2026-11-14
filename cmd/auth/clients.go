@@ -55,6 +55,9 @@ func isLoopbackRedirectHost(host string) bool {
 }
 
 func (a *app) registeredRedirect(clientID, redirect string) bool {
+	if a.mcp != nil && clientID == mcpPublicClientID {
+		return redirect == a.mcp.redirectURI
+	}
 	if clientID == a.clientID {
 		return redirect == a.redirectURI
 	}

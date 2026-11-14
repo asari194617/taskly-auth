@@ -132,6 +132,9 @@ func (a *app) ensureOAuthSchema(ctx context.Context) error {
 			return fmt.Errorf("create OAuth table: %w", err)
 		}
 	}
+	if err := a.ensureMCPSchema(ctx); err != nil {
+		return err
+	}
 	// Stage deployments may already have the table from an earlier image. Existing
 	// tokens have no family and expire within 15 minutes; new tokens are linked.
 	var familyColumnCount int
