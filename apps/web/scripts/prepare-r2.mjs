@@ -10,6 +10,12 @@ const pages = ["login", "password", "mail-code", "mfa", "logout", "passkeys", "s
 for (const page of pages) await copyFile(resolve(dist, `${page}.html`), resolve(dist, page));
 
 const files = await listFiles(dist);
+for (const file of files.filter((name) => name.endsWith(".html") || pages.includes(name))) {
+  const html = await readFile(resolve(dist, file), "utf8");
+  if (!/<meta\s+name=["']robots["']\s+content=["'][^"']*\bnoindex\b/i.test(html)) {
+    throw new Error(`missing noindex meta tag: ${file}`);
+  }
+}
 for (const page of pages) {
   if (!files.includes(page)) throw new Error(`missing extensionless page: ${page}`);
 }
