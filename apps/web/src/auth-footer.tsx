@@ -27,6 +27,12 @@ export function AuthFooter({ showReturnLink = false }: { showReturnLink?: boolea
     {showReturnLink && <a className="auth-footer-return" href={new URL(tasklyLoginURL).origin}>
       {tr("Taskly に戻る", "Back to Taskly")}
     </a>}
+    <nav className="auth-footer-policies" aria-label={tr("規約と方針", "Policies")}>
+      <a href="https://policies.taskly.iy0306.com/terms/">{tr("利用規約", "Terms")}</a>
+      <a href="https://policies.taskly.iy0306.com/privacy/">{tr("プライバシー", "Privacy")}</a>
+      <a href="https://policies.taskly.iy0306.com/security/">{tr("セキュリティ", "Security")}</a>
+      <a href="https://policies.taskly.iy0306.com/continuity/">{tr("継続性", "Continuity")}</a>
+    </nav>
     <div className="auth-footer-controls">
       <div className="auth-footer-control">
         <span aria-hidden="true">{tr("表示言語", "Language")}</span>

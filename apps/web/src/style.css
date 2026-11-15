@@ -20,6 +20,9 @@ main.wide { max-width: 600px; }
 .brand-link:hover { color: var(--charcoal-color-text-default); opacity: .75; }
 .brand-logo { display: block; width: auto; height: 24px; }
 .auth-footer { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 16px; margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--charcoal-color-border-secondary); color: var(--charcoal-color-text-secondary-default); }
+.auth-footer-policies { display: flex; flex-wrap: wrap; align-self: center; gap: 8px 16px; }
+.auth-footer-policies a { color: var(--charcoal-color-text-secondary-default); font-size: 12px; line-height: 1.5; text-decoration: underline; text-underline-offset: 3px; }
+.auth-footer-policies a:hover, .auth-footer-policies a:focus-visible { color: var(--charcoal-color-text-default); }
 .auth-footer-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-left: auto; }
 .auth-footer-control { display: grid; gap: 6px; font-size: 12px; line-height: 1.4; }
 .auth-footer-control .charcoal-dropdown-selector-root { width: 120px; }
