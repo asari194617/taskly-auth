@@ -4,4 +4,4 @@
 - `golang.org/x/net/html` の [GO-2026-6866](https://pkg.go.dev/vuln/GO-2026-6866) と [GO-2026-6860](https://pkg.go.dev/vuln/GO-2026-6860) は v0.62.0 より前に該当する。認証コードの gRPC クライアントを削除して `go mod tidy` を実行した結果、`x/net` は依存グラフからなくなった。
 - `golang.org/x/crypto/openpgp` の [GO-2026-5932](https://pkg.go.dev/vuln/GO-2026-5932) はパッケージ自体が非推奨で、全バージョンに既知の問題がある。auth のコードは `openpgp` を import していない。最新 main で更新済みの `x/crypto v0.59.0` を維持した。暗号ライブラリ全体の警告だけを理由に `bcrypt` を外さない。
 
-ローカルで `go test ./...` と `go vet ./...` を実行済み。`npm audit` は外部 npm registry へ非公開アプリの依存メタデータを送るため自動承認で拒否され、実行していない。`govulncheck` はこの環境にインストールされていないため再実行していない。運用側で許可した診断環境から両方を再実行する。
+ローカルで `go test ./...` と `go vet ./...` を実行済み。利用者の明示許可を受けて `npm audit` を実行し、2026-11-17 時点で検出された脆弱性は 0 件だった。公式 `govulncheck` も `go run golang.org/x/vuln/cmd/govulncheck@latest ./...` で実行し、脆弱性は検出されなかった。
