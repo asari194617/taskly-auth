@@ -88,7 +88,7 @@ func (a *app) applyBlockState(ctx context.Context, userID uint64, active bool, r
 		return err
 	}
 	now := time.Now().UTC()
-	if _, err := tx.ExecContext(ctx, `UPDATE blocks SET expires_at=?,updated_at=? WHERE user_id=? AND (expires_at IS NULL OR expires_at>?)`, now, now, userID, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE blocks SET expires_at=UTC_TIMESTAMP(),updated_at=UTC_TIMESTAMP() WHERE user_id=? AND (expires_at IS NULL OR expires_at>UTC_TIMESTAMP())`, userID); err != nil {
 		return err
 	}
 	if active {
@@ -109,6 +109,9 @@ func (a *app) applyBlockState(ctx context.Context, userID uint64, active bool, r
 				return err
 			}
 		}
+	}
+	if err := bumpAuthEpoch(ctx, tx, userID); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

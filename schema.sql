@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS users (
   display_name VARCHAR(255),
   hashed_password VARCHAR(255),
   email_code_allowed BOOLEAN NOT NULL DEFAULT TRUE,
+  auth_epoch BIGINT UNSIGNED NOT NULL DEFAULT 0,
   is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
   notification_lang VARCHAR(5) NOT NULL DEFAULT 'ja',
   is_registered BOOLEAN NOT NULL DEFAULT FALSE,
@@ -58,6 +59,7 @@ CREATE TABLE IF NOT EXISTS login_codes (
 -- Fresh OAuth-era codes use UTC timestamps; imported legacy codes remain intact.
 CREATE TABLE IF NOT EXISTS auth_login_codes (
   id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  user_id BIGINT UNSIGNED NULL,
   email VARCHAR(255) NOT NULL,
   hashed_code VARCHAR(255) NOT NULL,
   expires_at DATETIME NOT NULL,
@@ -65,7 +67,8 @@ CREATE TABLE IF NOT EXISTS auth_login_codes (
   failed_attempts INT NOT NULL DEFAULT 0,
   locked_until DATETIME,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_auth_login_codes_email (email)
+  INDEX idx_auth_login_codes_email (email),
+  INDEX idx_auth_login_codes_user_recent (user_id, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -101,7 +104,8 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_requests (
   consent_user_id BIGINT UNSIGNED NULL,
   consent_csrf_hash CHAR(64) NULL,
   expires_at DATETIME NOT NULL,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_oauth_authorization_expires (expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS oauth_codes (
@@ -194,6 +198,7 @@ CREATE TABLE IF NOT EXISTS auth_security_totp_uses (
 CREATE TABLE IF NOT EXISTS auth_challenges (
   token_hash CHAR(64) PRIMARY KEY,
   user_id BIGINT UNSIGNED NOT NULL,
+  auth_epoch BIGINT UNSIGNED NOT NULL DEFAULT 0,
   attempts INT NOT NULL DEFAULT 0,
   expires_at DATETIME NOT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -202,6 +207,7 @@ CREATE TABLE IF NOT EXISTS auth_challenges (
 CREATE TABLE IF NOT EXISTS auth_webauthn_sessions (
   token_hash CHAR(64) PRIMARY KEY,
   user_id BIGINT UNSIGNED NOT NULL,
+  auth_epoch BIGINT UNSIGNED NOT NULL DEFAULT 0,
   purpose VARCHAR(16) NOT NULL,
   session_data TEXT NOT NULL,
   expires_at DATETIME NOT NULL,
@@ -219,5 +225,6 @@ CREATE TABLE IF NOT EXISTS auth_totp_setups (
 CREATE TABLE IF NOT EXISTS auth_rate_limits (
   key_hash CHAR(64) PRIMARY KEY,
   attempts INT NOT NULL,
-  window_start DATETIME NOT NULL
+  window_start DATETIME NOT NULL,
+  INDEX idx_auth_rate_limits_window (window_start)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

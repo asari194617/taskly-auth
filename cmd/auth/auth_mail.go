@@ -18,7 +18,7 @@ import (
 )
 
 func sendMailCode(ctx context.Context, email, code string, purpose authCodePurpose, locale string) error {
-	composed, err := composeAuthCode(ctx, env("EMAIL_COMPOSE_GRPC_ADDR", "email-compose:50051"), locale, email, code, purpose)
+	composed, err := composeAuthCode(locale, email, code, purpose)
 	if err != nil {
 		return fmt.Errorf("compose auth email: %w", err)
 	}

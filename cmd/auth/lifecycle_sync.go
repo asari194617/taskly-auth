@@ -134,7 +134,7 @@ func (a *app) applyDeletedState(ctx context.Context, userID uint64, requestedAt 
 	if existingAt.Valid && existingAt.Time.Before(deletedAt) {
 		deletedAt = existingAt.Time.UTC()
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE users SET is_deleted=1,deleted_at=? WHERE id=?`, deletedAt, userID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET is_deleted=1,deleted_at=?,auth_epoch=auth_epoch+1 WHERE id=?`, deletedAt, userID); err != nil {
 		return time.Time{}, err
 	}
 	if err := revokeLifecycleCredentials(ctx, tx, userID, email); err != nil {
@@ -161,7 +161,7 @@ func (a *app) applyRestoredState(ctx context.Context, userID uint64) error {
 	if err := revokeLifecycleCredentials(ctx, tx, userID, email); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE users SET is_deleted=0,deleted_at=NULL WHERE id=?`, userID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET is_deleted=0,deleted_at=NULL,auth_epoch=auth_epoch+1 WHERE id=?`, userID); err != nil {
 		return err
 	}
 	return tx.Commit()

@@ -101,7 +101,7 @@ func (a *app) updateEmailCodeSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if _, err := tx.ExecContext(r.Context(), `UPDATE users SET email_code_allowed=? WHERE id=?`, *input.Enabled, id); err != nil {
+	if _, err := tx.ExecContext(r.Context(), `UPDATE users SET email_code_allowed=?,auth_epoch=auth_epoch+1 WHERE id=?`, *input.Enabled, id); err != nil {
 		a.emailSettingsStorageError(w)
 		return
 	}

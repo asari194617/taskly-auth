@@ -42,10 +42,10 @@ func main() {
 	if mode == "" {
 		mode = "cutover"
 	}
-	if mode != "cutover" && mode != "snapshot" && mode != "verify" {
-		fail("AUTH_MIGRATION_MODE must be cutover, snapshot, or verify")
+	if mode != "cutover" && mode != "snapshot" && mode != "verify" && mode != "repair-blocks" {
+		fail("AUTH_MIGRATION_MODE must be cutover, snapshot, verify, or repair-blocks")
 	}
-	if mode == "cutover" && os.Getenv("AUTH_WRITES_PAUSED") != "1" {
+	if (mode == "cutover" || mode == "repair-blocks") && os.Getenv("AUTH_WRITES_PAUSED") != "1" {
 		fail("AUTH_WRITES_PAUSED=1 is required after stopping identity writes")
 	}
 	// Raw DATETIME bytes must be copied unchanged; parseTime=true would turn
@@ -93,6 +93,12 @@ func main() {
 		log.Println("read-only identity verification matched; writes were not paused, so this is not a cutover approval")
 		return
 	}
+	if mode == "repair-blocks" {
+		if err := repairLegacyBlocks(ctx, source, target); err != nil {
+			fail("legacy block deadline repair: ", err)
+		}
+		return
+	}
 	var reading sourceReader = source
 	if mode == "snapshot" {
 		// A consistent read-only source snapshot permits a rehearsal while the
@@ -110,7 +116,7 @@ func main() {
 		}
 	}
 	for _, table := range tables {
-		sCount, sHash, err := fingerprint(ctx, reading, table)
+		sCount, sHash, err := fingerprintExpectedTarget(ctx, reading, table)
 		if err != nil {
 			fail(err)
 		}
@@ -144,7 +150,7 @@ func verifyExisting(ctx context.Context, source, target *sql.DB) error {
 	defer targetTx.Rollback()
 	var mismatches []string
 	for _, table := range tables {
-		sCount, sHash, err := fingerprint(ctx, sourceTx, table)
+		sCount, sHash, err := fingerprintExpectedTarget(ctx, sourceTx, table)
 		if err != nil {
 			return fmt.Errorf("source %s: %w", table, err)
 		}
@@ -228,7 +234,7 @@ func copyTable(ctx context.Context, source sourceReader, target *sql.DB, table s
 	if err != nil {
 		return fmt.Errorf("target schema: %w", err)
 	}
-	if !sameColumns(columns, targetColumns) {
+	if !compatibleMigrationColumns(table, columns, targetColumns) {
 		return fmt.Errorf("source and target columns differ; update the empty target schema before copying %s (source=%v target=%v)", table, columns, targetColumns)
 	}
 	quoted := make([]string, len(columns))
@@ -264,6 +270,11 @@ func copyTable(ctx context.Context, source sourceReader, target *sql.DB, table s
 				args[i] = append([]byte(nil), v...)
 			}
 		}
+		if table == "blocks" {
+			if err := normalizeBlockExpiry(columns, args); err != nil {
+				return err
+			}
+		}
 		if _, err := stmt.ExecContext(ctx, args...); err != nil {
 			return fmt.Errorf("insert row %d: %w", copied+1, err)
 		}
@@ -275,7 +286,7 @@ func copyTable(ctx context.Context, source sourceReader, target *sql.DB, table s
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	sCount, sHash, err := fingerprint(ctx, source, table)
+	sCount, sHash, err := fingerprintExpectedTarget(ctx, source, table)
 	if err != nil {
 		return err
 	}
@@ -302,7 +313,31 @@ func sameColumns(source, target []string) bool {
 	return true
 }
 
+func compatibleMigrationColumns(table string, source, target []string) bool {
+	if sameColumns(source, target) {
+		return true
+	}
+	if table != "users" || len(target) != len(source)+1 {
+		return false
+	}
+	withoutEpoch := make([]string, 0, len(target)-1)
+	for _, column := range target {
+		if column != "auth_epoch" {
+			withoutEpoch = append(withoutEpoch, column)
+		}
+	}
+	return sameColumns(source, withoutEpoch)
+}
+
 func fingerprint(ctx context.Context, db sourceReader, table string) (int64, string, error) {
+	return fingerprintWithBlockNormalization(ctx, db, table, false)
+}
+
+func fingerprintExpectedTarget(ctx context.Context, db sourceReader, table string) (int64, string, error) {
+	return fingerprintWithBlockNormalization(ctx, db, table, table == "blocks")
+}
+
+func fingerprintWithBlockNormalization(ctx context.Context, db sourceReader, table string, normalizeBlocks bool) (int64, string, error) {
 	rows, err := db.QueryContext(ctx, "SELECT * FROM `"+table+"` ORDER BY id")
 	if err != nil {
 		return 0, "", err
@@ -323,8 +358,38 @@ func fingerprint(ctx context.Context, db sourceReader, table string) (int64, str
 		if err := rows.Scan(dest...); err != nil {
 			return 0, "", err
 		}
-		for _, v := range values {
+		if normalizeBlocks {
+			args := make([]any, len(values))
+			for i, value := range values {
+				if value != nil {
+					args[i] = append([]byte(nil), value...)
+				}
+			}
+			if err := normalizeBlockExpiry(columns, args); err != nil {
+				return 0, "", err
+			}
+			for _, arg := range args {
+				if arg == nil {
+					hashField(h, nil)
+				} else {
+					hashField(h, arg.([]byte))
+				}
+			}
+			count++
+			continue
+		}
+		userEpochPresent := false
+		for _, column := range columns {
+			if column == "auth_epoch" {
+				userEpochPresent = true
+				break
+			}
+		}
+		for i, v := range values {
 			hashField(h, v)
+			if table == "users" && normalizeBlocks == false && !userEpochPresent && columns[i] == "email_code_allowed" {
+				hashField(h, []byte("0"))
+			}
 		}
 		count++
 	}
@@ -344,4 +409,70 @@ func hashField(h hash.Hash, value []byte) {
 	binary.BigEndian.PutUint64(length[:], uint64(len(value)))
 	h.Write(length[:])
 	h.Write(value)
+}
+
+func normalizeBlockExpiry(columns []string, values []any) error {
+	for i, name := range columns {
+		if name != "expires_at" || values[i] == nil {
+			continue
+		}
+		raw := string(values[i].([]byte))
+		legacy, err := time.ParseInLocation("2006-01-02 15:04:05", raw, time.FixedZone("JST", 9*3600))
+		if err != nil {
+			return fmt.Errorf("invalid legacy block expiry: %w", err)
+		}
+		values[i] = []byte(legacy.UTC().Format("2006-01-02 15:04:05"))
+		break
+	}
+	return nil
+}
+
+// Repair only rows still identical to the paused legacy source. A previously
+// converted row is skipped, while a different target value stops the repair.
+func repairLegacyBlocks(ctx context.Context, source, target *sql.DB) error {
+	rows, err := source.QueryContext(ctx, `SELECT id,expires_at FROM blocks WHERE expires_at IS NOT NULL ORDER BY id`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	tx, err := target.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var repaired, already int
+	for rows.Next() {
+		var id uint64
+		var legacy []byte
+		if err := rows.Scan(&id, &legacy); err != nil {
+			return err
+		}
+		converted := []any{append([]byte(nil), legacy...)}
+		if err := normalizeBlockExpiry([]string{"expires_at"}, converted); err != nil {
+			return err
+		}
+		var current []byte
+		if err := tx.QueryRowContext(ctx, `SELECT expires_at FROM blocks WHERE id=? FOR UPDATE`, id).Scan(&current); err != nil {
+			return fmt.Errorf("block %d target missing: %w", id, err)
+		}
+		if string(current) == string(converted[0].([]byte)) {
+			already++
+			continue
+		}
+		if string(current) != string(legacy) {
+			return fmt.Errorf("block %d target differs from legacy and normalized values", id)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE blocks SET expires_at=? WHERE id=? AND expires_at=?`, converted[0], id, legacy); err != nil {
+			return err
+		}
+		repaired++
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	log.Printf("legacy block deadlines: %d repaired, %d already normalized", repaired, already)
+	return nil
 }

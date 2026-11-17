@@ -58,9 +58,12 @@ func TestExistingPasskeyRequestKeepsParentRPID(t *testing.T) {
 		t.Fatal(err)
 	}
 	user := &passkeyUser{id: 42, email: "test@example.com", credentials: []webauthn.Credential{{ID: []byte("old-passkey")}}}
-	assertion, _, err := service.BeginLogin(user)
+	assertion, session, err := service.BeginLogin(user, webauthn.WithUserVerification(protocol.VerificationRequired))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if assertion.Response.UserVerification != protocol.VerificationRequired || session.UserVerification != protocol.VerificationRequired {
+		t.Fatal("standalone passkey login did not require user verification")
 	}
 	if assertion.Response.RelyingPartyID != "taskly.iy0306.com" {
 		t.Fatalf("passkey RP ID changed: %q", assertion.Response.RelyingPartyID)

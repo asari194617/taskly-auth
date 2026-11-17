@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -26,6 +25,16 @@ type loginInput struct {
 	TOTP      string `json:"totp"`
 	Recovery  string `json:"recovery_code"`
 	Challenge string `json:"auth_challenge"`
+}
+
+type loginProof struct {
+	authEpoch       uint64
+	passwordHash    string
+	passwordHashSet bool
+	email           string
+	totpSecret      string
+	passkeyID       string
+	passkeyData     string
 }
 
 func (a *app) requireUI(w http.ResponseWriter, r *http.Request) bool {
@@ -49,8 +58,12 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 400, "invalid_request")
 		return
 	}
-	limited, err := a.rateLimited(r.Context(), "login:"+email)
-	if err != nil {
+	var id, authEpoch uint64
+	var hash sql.NullString
+	var emailAllowed, deleted bool
+	err := a.db.QueryRowContext(r.Context(), `SELECT id,auth_epoch,hashed_password,email_code_allowed,is_deleted FROM users WHERE email=?`, email).Scan(&id, &authEpoch, &hash, &emailAllowed, &deleted)
+	limited, limitErr := a.authAttemptLimited(r, id)
+	if limitErr != nil {
 		oauthError(w, 503, "temporarily_unavailable")
 		a.alerts.send("Taskly auth rate-limit database failed")
 		return
@@ -59,16 +72,22 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 429, "rate_limited")
 		return
 	}
-	var id uint64
-	var hash sql.NullString
-	var emailAllowed, deleted bool
-	err = a.db.QueryRowContext(r.Context(), `SELECT id,hashed_password,email_code_allowed,is_deleted FROM users WHERE email=?`, email).Scan(&id, &hash, &emailAllowed, &deleted)
 	if err != nil || deleted || a.blocked(r, id) {
 		oauthError(w, 401, "invalid_credentials")
 		return
 	}
+	proof := loginProof{authEpoch: authEpoch, email: email, passwordHashSet: true}
+	if hash.Valid {
+		proof.passwordHash = hash.String
+	}
+	if input.TOTP != "" {
+		if err := a.db.QueryRowContext(r.Context(), `SELECT secret FROM totp_secrets WHERE user_id=? AND is_active=1`, id).Scan(&proof.totpSecret); err != nil {
+			oauthError(w, 401, "invalid_credentials")
+			return
+		}
+	}
 	if input.Challenge != "" {
-		if input.Password != "" || !a.consumeChallenge(r, input.Challenge, id) {
+		if input.Password != "" || !a.consumeChallenge(r, input.Challenge, id, authEpoch) {
 			oauthError(w, 401, "invalid_credentials")
 			return
 		}
@@ -76,7 +95,7 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 			oauthError(w, 401, "invalid_credentials")
 			return
 		}
-		a.finishLogin(w, r, id, "password_"+secondFactorMethod(input))
+		a.finishLoginWithProof(w, r, id, "password_"+secondFactorMethod(input), proof)
 		return
 	}
 	if hash.Valid && hash.String != "" {
@@ -106,7 +125,7 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 				oauthError(w, 500, "server_error")
 				return
 			}
-			_, err = a.db.ExecContext(r.Context(), `INSERT INTO auth_challenges (token_hash,user_id,expires_at) VALUES (?,?,?)`, digest(challenge), id, time.Now().UTC().Add(5*time.Minute))
+			_, err = a.db.ExecContext(r.Context(), `INSERT INTO auth_challenges (token_hash,user_id,auth_epoch,expires_at) VALUES (?,?,?,?)`, digest(challenge), id, authEpoch, time.Now().UTC().Add(5*time.Minute))
 			if err != nil {
 				oauthError(w, 500, "server_error")
 				return
@@ -114,14 +133,14 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, 202, map[string]any{"mfa_required": true, "auth_challenge": challenge, "expires_in": 300})
 			return
 		}
-		a.finishLogin(w, r, id, "password")
+		a.finishLoginWithProof(w, r, id, "password", proof)
 		return
 	}
 	if input.Password != "" || !a.verifySecondFactor(r, id, email, input, emailAllowed) {
 		oauthError(w, 401, "invalid_credentials")
 		return
 	}
-	a.finishLogin(w, r, id, secondFactorMethod(input))
+	a.finishLoginWithProof(w, r, id, secondFactorMethod(input), proof)
 }
 
 // Only call this after verifySecondFactor has accepted exactly one method.
@@ -140,13 +159,12 @@ func secondFactorMethod(input loginInput) string {
 
 func (a *app) blocked(r *http.Request, id uint64) bool {
 	var count int
-	jst := time.Now().In(time.FixedZone("JST", 9*3600))
-	err := a.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM blocks WHERE user_id=? AND (expires_at IS NULL OR expires_at>?)`, id, jst).Scan(&count)
+	err := a.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM blocks WHERE user_id=? AND (expires_at IS NULL OR expires_at>UTC_TIMESTAMP())`, id).Scan(&count)
 	return err != nil || count > 0
 }
 
-func (a *app) consumeChallenge(r *http.Request, challenge string, id uint64) bool {
-	result, err := a.db.ExecContext(r.Context(), `DELETE FROM auth_challenges WHERE token_hash=? AND user_id=? AND expires_at>UTC_TIMESTAMP()`, digest(challenge), id)
+func (a *app) consumeChallenge(r *http.Request, challenge string, id, authEpoch uint64) bool {
+	result, err := a.db.ExecContext(r.Context(), `DELETE FROM auth_challenges WHERE token_hash=? AND user_id=? AND auth_epoch=? AND expires_at>UTC_TIMESTAMP()`, digest(challenge), id, authEpoch)
 	if err != nil {
 		return false
 	}
@@ -172,13 +190,20 @@ func (a *app) verifySecondFactor(r *http.Request, id uint64, email string, input
 		return a.consumeEmailCode(r, id, email, input.Code)
 	}
 	if input.TOTP != "" {
-		var encrypted string
-		err := a.db.QueryRowContext(r.Context(), `SELECT secret FROM totp_secrets WHERE user_id=? AND is_active=1`, id).Scan(&encrypted)
+		tx, err := a.db.BeginTx(r.Context(), nil)
 		if err != nil {
 			return false
 		}
-		secret, err := decryptTOTP(encrypted, osEnv("TOTP_ENC_KEY"))
-		return err == nil && totp.Validate(input.TOTP, secret)
+		defer tx.Rollback()
+		var currentID uint64
+		if err := tx.QueryRowContext(r.Context(), `SELECT id FROM users WHERE id=? AND is_deleted=0 FOR UPDATE`, id).Scan(&currentID); err != nil {
+			return false
+		}
+		var encrypted string
+		if err := tx.QueryRowContext(r.Context(), `SELECT secret FROM totp_secrets WHERE user_id=? AND is_active=1 FOR UPDATE`, id).Scan(&encrypted); err != nil {
+			return false
+		}
+		return a.consumeTOTPInTx(r.Context(), tx, id, encrypted, input.TOTP) == nil && tx.Commit() == nil
 	}
 	if input.Recovery != "" {
 		result, err := a.db.ExecContext(r.Context(), `UPDATE recovery_codes SET is_used=1 WHERE user_id=? AND hashed_code=? AND is_used=0`, id, digest(input.Recovery))
@@ -238,7 +263,7 @@ func (a *app) consumeEmailCode(r *http.Request, userID uint64, email, code strin
 	var expires time.Time
 	var consumed, locked sql.NullTime
 	var attempts int
-	err = tx.QueryRowContext(r.Context(), `SELECT id,hashed_code,expires_at,consumed_at,locked_until,failed_attempts FROM auth_login_codes WHERE email=? ORDER BY id DESC LIMIT 1 FOR UPDATE`, email).Scan(&codeID, &hashed, &expires, &consumed, &locked, &attempts)
+	err = tx.QueryRowContext(r.Context(), `SELECT id,hashed_code,expires_at,consumed_at,locked_until,failed_attempts FROM auth_login_codes WHERE user_id=? AND BINARY email=BINARY ? ORDER BY id DESC LIMIT 1 FOR UPDATE`, userID, currentEmail).Scan(&codeID, &hashed, &expires, &consumed, &locked, &attempts)
 	if err != nil || consumed.Valid || time.Now().UTC().After(expires) || (locked.Valid && time.Now().UTC().Before(locked.Time)) {
 		return false
 	}
@@ -262,6 +287,10 @@ func (a *app) consumeEmailCode(r *http.Request, userID uint64, email, code strin
 }
 
 func (a *app) finishLogin(w http.ResponseWriter, r *http.Request, id uint64, method string) {
+	a.finishLoginWithProof(w, r, id, method, loginProof{})
+}
+
+func (a *app) finishLoginWithProof(w http.ResponseWriter, r *http.Request, id uint64, method string, proof loginProof) {
 	token, err := randomToken()
 	if err != nil {
 		oauthError(w, 500, "server_error")
@@ -284,8 +313,43 @@ func (a *app) finishLogin(w http.ResponseWriter, r *http.Request, id uint64, met
 		return
 	}
 	defer tx.Rollback()
+	if a.beforeSessionUserLock != nil {
+		a.beforeSessionUserLock()
+	}
 	var deleted bool
-	err = tx.QueryRowContext(r.Context(), `SELECT is_deleted FROM users WHERE id=? FOR UPDATE`, id).Scan(&deleted)
+	if proof == (loginProof{}) {
+		err = tx.QueryRowContext(r.Context(), `SELECT is_deleted FROM users WHERE id=? FOR UPDATE`, id).Scan(&deleted)
+	} else {
+		var currentHash sql.NullString
+		var currentEmail string
+		var emailAllowed bool
+		var currentEpoch uint64
+		err = tx.QueryRowContext(r.Context(), `SELECT is_deleted,auth_epoch,hashed_password,email,email_code_allowed FROM users WHERE id=? FOR UPDATE`, id).Scan(&deleted, &currentEpoch, &currentHash, &currentEmail, &emailAllowed)
+		if err == nil && (currentEpoch != proof.authEpoch || (proof.passwordHashSet && currentHash.String != proof.passwordHash) || !strings.EqualFold(currentEmail, proof.email) || (strings.Contains(method, "email_code") && !emailAllowed)) {
+			err = sql.ErrNoRows
+		}
+		if err == nil {
+			var blocks int
+			err = tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM blocks WHERE user_id=? AND (expires_at IS NULL OR expires_at>UTC_TIMESTAMP())`, id).Scan(&blocks)
+			if err == nil && blocks != 0 {
+				err = sql.ErrNoRows
+			}
+		}
+		if err == nil && proof.totpSecret != "" {
+			var currentSecret string
+			err = tx.QueryRowContext(r.Context(), `SELECT secret FROM totp_secrets WHERE user_id=? AND is_active=1`, id).Scan(&currentSecret)
+			if err == nil && currentSecret != proof.totpSecret {
+				err = sql.ErrNoRows
+			}
+		}
+		if err == nil && proof.passkeyID != "" {
+			var currentData string
+			err = tx.QueryRowContext(r.Context(), `SELECT public_key FROM passkeys WHERE user_id=? AND credential_id=?`, id, proof.passkeyID).Scan(&currentData)
+			if err == nil && currentData != proof.passkeyData {
+				err = sql.ErrNoRows
+			}
+		}
+	}
 	if err == nil && deleted {
 		err = sql.ErrNoRows
 	}
@@ -302,11 +366,15 @@ func (a *app) finishLogin(w http.ResponseWriter, r *http.Request, id uint64, met
 		err = tx.Commit()
 	}
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			oauthError(w, 401, "invalid_credentials")
+			return
+		}
 		oauthError(w, 500, "server_error")
 		a.alerts.send("Taskly auth session storage failed")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: "taskly_auth_session", Value: token, Path: "/", Expires: expires, MaxAge: 12 * 3600, Secure: a.secure, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, &http.Cookie{Name: a.sessionCookieName(), Value: token, Path: "/", Expires: expires, MaxAge: 12 * 3600, Secure: a.secure, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	jsonResponse(w, 200, map[string]bool{"authenticated": true})
 }
 
@@ -314,7 +382,7 @@ func (a *app) logout(w http.ResponseWriter, r *http.Request) {
 	if !a.requireUI(w, r) {
 		return
 	}
-	if cookie, err := r.Cookie("taskly_auth_session"); err == nil {
+	if cookie, err := r.Cookie(a.sessionCookieName()); err == nil {
 		if _, err := a.db.ExecContext(r.Context(), `DELETE FROM auth_security_codes WHERE session_hash=?`, digest(cookie.Value)); err != nil {
 			oauthError(w, http.StatusServiceUnavailable, "temporarily_unavailable")
 			return
@@ -324,7 +392,11 @@ func (a *app) logout(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	http.SetCookie(w, &http.Cookie{Name: "taskly_auth_session", Value: "", Path: "/", MaxAge: -1, Secure: a.secure, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, &http.Cookie{Name: a.sessionCookieName(), Value: "", Path: "/", MaxAge: -1, Secure: a.secure, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	if a.secure {
+		// Clear the old host-only cookie after the production name transition.
+		http.SetCookie(w, &http.Cookie{Name: "taskly_auth_session", Value: "", Path: "/", MaxAge: -1, Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	}
 	w.WriteHeader(204)
 }
 
@@ -343,8 +415,12 @@ func (a *app) requestCode(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 400, "invalid_request")
 		return
 	}
-	limited, err := a.rateLimited(r.Context(), "email-code:"+email)
-	if err != nil {
+	var id uint64
+	var allowed, deleted bool
+	var locale, registeredEmail string
+	err := a.db.QueryRowContext(r.Context(), `SELECT id,email,email_code_allowed,is_deleted,notification_lang FROM users WHERE email=?`, email).Scan(&id, &registeredEmail, &allowed, &deleted, &locale)
+	limited, limitErr := a.authAttemptLimited(r, id)
+	if limitErr != nil {
 		oauthError(w, 503, "temporarily_unavailable")
 		return
 	}
@@ -352,11 +428,7 @@ func (a *app) requestCode(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 429, "rate_limited")
 		return
 	}
-	var id uint64
-	var allowed, deleted bool
-	var locale string
-	err = a.db.QueryRowContext(r.Context(), `SELECT id,email_code_allowed,is_deleted,notification_lang FROM users WHERE email=?`, email).Scan(&id, &allowed, &deleted, &locale)
-	if err != nil || !allowed || deleted || a.blocked(r, id) {
+	if err != nil || !strings.EqualFold(email, registeredEmail) || !allowed || deleted || a.blocked(r, id) {
 		w.WriteHeader(202)
 		return
 	}
@@ -366,13 +438,28 @@ func (a *app) requestCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code := fmt.Sprintf("%06d", n.Int64())
-	_, err = a.db.ExecContext(r.Context(), `INSERT INTO auth_login_codes (email,hashed_code,expires_at) VALUES (?,?,?)`, email, digest(code), time.Now().UTC().Add(10*time.Minute))
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		oauthError(w, 503, "temporarily_unavailable")
+		return
+	}
+	defer tx.Rollback()
+	var currentEmail string
+	if err := tx.QueryRowContext(r.Context(), `SELECT email FROM users WHERE id=? AND is_deleted=0 AND email_code_allowed=1 FOR UPDATE`, id).Scan(&currentEmail); err != nil || currentEmail != registeredEmail {
+		w.WriteHeader(202)
+		return
+	}
+	_, err = tx.ExecContext(r.Context(), `INSERT INTO auth_login_codes (user_id,email,hashed_code,expires_at) VALUES (?,?,?,?)`, id, currentEmail, digest(code), time.Now().UTC().Add(10*time.Minute))
 	if err != nil {
 		oauthError(w, 500, "server_error")
 		a.alerts.send("Taskly auth email code storage failed")
 		return
 	}
-	if err := sendMailCode(r.Context(), email, code, loginCodePurpose, locale); err != nil {
+	if err := tx.Commit(); err != nil {
+		oauthError(w, 503, "temporarily_unavailable")
+		return
+	}
+	if err := sendMailCode(r.Context(), currentEmail, code, loginCodePurpose, locale); err != nil {
 		oauthError(w, 503, "temporarily_unavailable")
 		a.alerts.send("Taskly auth email delivery failed")
 		return

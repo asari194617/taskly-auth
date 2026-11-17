@@ -967,7 +967,14 @@ func TestMCPAuthorizationAlwaysNavigatesThroughExplicitConsent(t *testing.T) {
 			if test.failAt == "insert" {
 				insert.err = errors.New("unavailable")
 			}
-			steps := []mcpSQLStep{insert}
+			steps := []mcpSQLStep{
+				{query: "SELECT COUNT(*) FROM auth_rate_limits WHERE key_hash=", columns: []string{"count"}, values: [][]driver.Value{{int64(0)}}},
+				{query: "SELECT COUNT(*) FROM auth_rate_limits", columns: []string{"count"}, values: [][]driver.Value{{int64(0)}}},
+				{query: "INSERT INTO auth_rate_limits", affected: 1},
+				{query: "SELECT attempts FROM auth_rate_limits", columns: []string{"attempts"}, values: [][]driver.Value{{int64(1)}}},
+				{query: "SELECT COUNT(*) FROM oauth_authorization_requests", columns: []string{"count"}, values: [][]driver.Value{{int64(0)}}},
+				insert,
+			}
 			if test.cookie && test.failAt != "insert" {
 				steps = append(steps, mcpSessionStep())
 				request := mcpAuthorizationStep("guidance:read guidance:tasks:write")

@@ -30,6 +30,9 @@ func TestEmailCodeLoginRecordsCurrentEmailVerification(t *testing.T) {
 	if err := db.PingContext(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	if err := (&app{db: db}).ensureOAuthSchema(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 
 	email := fmt.Sprintf("verification-%d@example.test", time.Now().UnixNano())
 	otherEmail := "other-" + email
@@ -67,7 +70,7 @@ func TestEmailCodeLoginRecordsCurrentEmailVerification(t *testing.T) {
 	userID := createUser(email)
 	otherID := createUser(otherEmail)
 	const code = "123456"
-	result, err := db.ExecContext(t.Context(), `INSERT INTO auth_login_codes (email,hashed_code,expires_at) VALUES (?,?,?)`, email, digest(code), time.Now().UTC().Add(5*time.Minute))
+	result, err := db.ExecContext(t.Context(), `INSERT INTO auth_login_codes (user_id,email,hashed_code,expires_at) VALUES (?,?,?,?)`, userID, email, digest(code), time.Now().UTC().Add(5*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +78,7 @@ func TestEmailCodeLoginRecordsCurrentEmailVerification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := &app{db: db}
+	a := &app{db: db, uiURL: "http://localhost:3068", alerts: &alerter{}}
 	request := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
 	verify := func(id uint64, value, candidate string) bool {
 		t.Helper()
@@ -108,7 +111,24 @@ func TestEmailCodeLoginRecordsCurrentEmailVerification(t *testing.T) {
 	}
 	assertCodeState(false, 0)
 	assertUnverified(otherID)
-	otherCode, err := db.ExecContext(t.Context(), `INSERT INTO auth_login_codes (email,hashed_code,expires_at) VALUES (?,?,?)`, otherEmail, digest(code), time.Now().UTC().Add(5*time.Minute))
+	accentAlias := strings.Replace(email, "verification-", "vérification-", 1)
+	if verify(userID, accentAlias, code) {
+		t.Fatal("accepted a code through an accent-equivalent address")
+	}
+	requestAlias := httptest.NewRequest(http.MethodPost, "/auth/request-code", strings.NewReader(fmt.Sprintf(`{"email":%q}`, accentAlias)))
+	requestAlias.Header.Set("Origin", a.uiURL)
+	requestAlias.Header.Set("X-Auth-UI", "1")
+	requestAlias.Header.Set("Content-Type", "application/json")
+	responseAlias := httptest.NewRecorder()
+	a.requestCode(responseAlias, requestAlias)
+	if responseAlias.Code != http.StatusAccepted {
+		t.Fatalf("accent-equivalent address was processed as a recipient: %d %s", responseAlias.Code, responseAlias.Body.String())
+	}
+	var codeCount int
+	if err := db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM auth_login_codes WHERE user_id=?`, userID).Scan(&codeCount); err != nil || codeCount != 1 {
+		t.Fatalf("alias created a login code: count=%d error=%v", codeCount, err)
+	}
+	otherCode, err := db.ExecContext(t.Context(), `INSERT INTO auth_login_codes (user_id,email,hashed_code,expires_at) VALUES (?,?,?,?)`, otherID, otherEmail, digest(code), time.Now().UTC().Add(5*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}

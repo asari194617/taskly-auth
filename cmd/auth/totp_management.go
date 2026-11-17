@@ -50,6 +50,32 @@ func validTOTPCode(code string) bool {
 	return true
 }
 
+// Call while holding the user row lock. Login, step-up, activation and disable
+// all share this record, so two transactions cannot accept one time step.
+func (a *app) consumeTOTPInTx(ctx context.Context, tx *sql.Tx, id uint64, encrypted, code string) error {
+	if !validTOTPCode(code) {
+		return errors.New("invalid TOTP code")
+	}
+	secret, err := decryptTOTP(encrypted, osEnv("TOTP_ENC_KEY"))
+	if err != nil || !totp.Validate(code, secret) {
+		return errors.New("invalid TOTP code")
+	}
+	currentHash := a.securityCodeDigest("totp", id, digest(secret), "", code)
+	legacyHash := a.securityCodeDigest("totp", id, "", "", code)
+	var used int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM auth_security_totp_uses WHERE user_id=? AND code_hash IN (?,?) AND expires_at>UTC_TIMESTAMP()`, id, currentHash, legacyHash).Scan(&used); err != nil {
+		return err
+	}
+	if used != 0 {
+		return errors.New("TOTP code already used")
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM auth_security_totp_uses WHERE user_id=? AND expires_at<=UTC_TIMESTAMP()`, id); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO auth_security_totp_uses (user_id,code_hash,expires_at) VALUES (?,?,?)`, id, currentHash, time.Now().UTC().Add(2*time.Minute))
+	return err
+}
+
 func (a *app) totpStatus(w http.ResponseWriter, r *http.Request) {
 	if !a.requireUI(w, r) {
 		return
@@ -181,6 +207,10 @@ func (a *app) totpActivate(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, http.StatusUnauthorized, "invalid_code")
 		return
 	}
+	if err := a.consumeTOTPInTx(r.Context(), tx, id, encrypted, input.Code); err != nil {
+		oauthError(w, http.StatusUnauthorized, "invalid_code")
+		return
+	}
 	if _, err := tx.ExecContext(r.Context(), `INSERT INTO totp_secrets (user_id,secret,is_active) VALUES (?,?,1) ON DUPLICATE KEY UPDATE secret=VALUES(secret),is_active=1`, id, encrypted); err != nil {
 		a.totpStorageError(w)
 		return
@@ -194,6 +224,10 @@ func (a *app) totpActivate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := tx.ExecContext(r.Context(), `DELETE FROM auth_security_codes WHERE user_id=?`, id); err != nil {
+		a.totpStorageError(w)
+		return
+	}
+	if err := bumpAuthEpoch(r.Context(), tx, id); err != nil {
 		a.totpStorageError(w)
 		return
 	}
@@ -264,6 +298,10 @@ func (a *app) totpDisable(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, http.StatusUnauthorized, "invalid_code")
 		return
 	}
+	if err := a.consumeTOTPInTx(r.Context(), tx, id, encrypted, input.Code); err != nil {
+		oauthError(w, http.StatusUnauthorized, "invalid_code")
+		return
+	}
 	var passkeys, recovery int
 	if err := tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM passkeys WHERE user_id=?`, id).Scan(&passkeys); err != nil {
 		a.totpStorageError(w)
@@ -286,6 +324,10 @@ func (a *app) totpDisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := tx.ExecContext(r.Context(), `DELETE FROM auth_security_codes WHERE user_id=?`, id); err != nil {
+		a.totpStorageError(w)
+		return
+	}
+	if err := bumpAuthEpoch(r.Context(), tx, id); err != nil {
 		a.totpStorageError(w)
 		return
 	}

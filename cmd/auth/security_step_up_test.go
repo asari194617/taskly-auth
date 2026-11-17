@@ -105,6 +105,12 @@ func (c *securityTestConn) QueryContext(_ context.Context, query string, args []
 		return &securityTestRows{columns: []string{"user_id"}, values: [][]driver.Value{{int64(7)}}}, nil
 	case strings.Contains(query, "SELECT attempts FROM auth_rate_limits"):
 		return &securityTestRows{columns: []string{"attempts"}, values: [][]driver.Value{{int64(1)}}}, nil
+	case strings.Contains(query, "SELECT COUNT(*) FROM auth_security_totp_uses"):
+		used := int64(0)
+		if c.config.totpCodeUsed {
+			used = 1
+		}
+		return &securityTestRows{columns: []string{"count"}, values: [][]driver.Value{{used}}}, nil
 	case strings.Contains(query, "SELECT email,notification_lang FROM users"):
 		return &securityTestRows{columns: []string{"email", "notification_lang"}, values: [][]driver.Value{{c.config.email, "ja"}}}, nil
 	case strings.Contains(query, "SELECT email FROM users"):

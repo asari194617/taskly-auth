@@ -30,6 +30,10 @@ type historyTestConnector struct {
 	rollbacks         int
 	lastHistoryQuery  string
 	lastHistoryArgs   []driver.NamedValue
+	currentHash       string
+	currentEmail      string
+	currentEpoch      int64
+	blocked           bool
 }
 
 func (c *historyTestConnector) Connect(context.Context) (driver.Conn, error) {
@@ -140,6 +144,14 @@ func ptrFromValue(value driver.Value) *string {
 
 func (c *historyTestConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
 	switch {
+	case strings.Contains(query, "SELECT is_deleted,auth_epoch,hashed_password,email,email_code_allowed FROM users"):
+		return &historyTestRows{columns: []string{"is_deleted", "auth_epoch", "hashed_password", "email", "email_code_allowed"}, values: [][]driver.Value{{false, c.state.currentEpoch, c.state.currentHash, c.state.currentEmail, true}}}, nil
+	case strings.Contains(query, "SELECT COUNT(*) FROM blocks"):
+		count := int64(0)
+		if c.state.blocked {
+			count = 1
+		}
+		return &historyTestRows{columns: []string{"count"}, values: [][]driver.Value{{count}}}, nil
 	case strings.Contains(query, "SELECT is_deleted FROM users"):
 		return &historyTestRows{columns: []string{"is_deleted"}, values: [][]driver.Value{{false}}}, nil
 	case strings.Contains(query, "FROM auth_sessions s JOIN users"):
@@ -358,6 +370,30 @@ func TestFinishLoginPersistsDirectSocketEvidence(t *testing.T) {
 	entry := state.history[0].entry
 	if stringValue(entry.IPAddress) != "8.8.8.8" || stringValue(entry.IPSource) != "direct_socket" || entry.Location == nil || entry.Location.City != "Mountain View" || stringValue(entry.GeoSource) != geoIPSource || stringValue(entry.GeoRelease) != "2026-10" || stringValue(entry.GeoDBSHA256) != a.geoDB.sha256 || stringValue(entry.Device) != "ExampleBrowser/1.0" {
 		t.Fatalf("direct socket persisted wrong evidence: %+v", entry)
+	}
+}
+
+func TestFinishLoginRejectsChangedCredentialOrBlockBeforeSessionInsert(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		hash    string
+		blocked bool
+		epoch   int64
+	}{
+		{"password changed", "new-hash", false, 0},
+		{"block added", "old-hash", true, 0},
+		{"MFA or passkey changed", "old-hash", false, 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state := &historyTestConnector{currentHash: test.hash, currentEmail: "user@example.test", blocked: test.blocked, currentEpoch: test.epoch}
+			a := &app{db: sql.OpenDB(state), alerts: &alerter{}}
+			defer a.db.Close()
+			w := httptest.NewRecorder()
+			a.finishLoginWithProof(w, httptest.NewRequest(http.MethodPost, "/auth/login", nil), 7, "password", loginProof{passwordHash: "old-hash", passwordHashSet: true, email: "user@example.test"})
+			if w.Code != http.StatusUnauthorized || len(w.Result().Cookies()) != 0 || len(state.sessions) != 0 || state.commits != 0 {
+				t.Fatalf("stale authentication issued a session: status=%d sessions=%d commits=%d", w.Code, len(state.sessions), state.commits)
+			}
+		})
 	}
 }
 

@@ -65,6 +65,9 @@ func (a *app) authorize(w http.ResponseWriter, r *http.Request) {
 			oauthError(w, 400, "invalid_request")
 			return
 		}
+		if !a.allowAuthorizationRequest(w, r) {
+			return
+		}
 		var err error
 		requestID, err = randomToken()
 		if err != nil {
@@ -443,7 +446,7 @@ func (a *app) recentSessionUser(r *http.Request) (uint64, bool) {
 }
 
 func (a *app) sessionUserWithFreshness(r *http.Request, recent bool) (uint64, bool) {
-	cookie, err := r.Cookie("taskly_auth_session")
+	cookie, err := r.Cookie(a.sessionCookieName())
 	if err != nil || cookie.Value == "" {
 		return 0, false
 	}

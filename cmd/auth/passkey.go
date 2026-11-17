@@ -42,6 +42,10 @@ func parsePasskeyResponse(w http.ResponseWriter, r *http.Request, dst *passkeyRe
 }
 
 func (a *app) storeWebauthnSession(ctx context.Context, purpose string, userID uint64, data *webauthn.SessionData) (string, error) {
+	var authEpoch uint64
+	if err := a.db.QueryRowContext(ctx, `SELECT auth_epoch FROM users WHERE id=? AND is_deleted=0`, userID).Scan(&authEpoch); err != nil {
+		return "", err
+	}
 	requestID, err := randomToken()
 	if err != nil {
 		return "", err
@@ -53,39 +57,39 @@ func (a *app) storeWebauthnSession(ctx context.Context, purpose string, userID u
 	if _, err := a.db.ExecContext(ctx, `DELETE FROM auth_webauthn_sessions WHERE expires_at<UTC_TIMESTAMP()`); err != nil {
 		return "", err
 	}
-	_, err = a.db.ExecContext(ctx, `INSERT INTO auth_webauthn_sessions (token_hash,user_id,purpose,session_data,expires_at) VALUES (?,?,?,?,?)`, digest(requestID), userID, purpose, string(raw), time.Now().UTC().Add(5*time.Minute))
+	_, err = a.db.ExecContext(ctx, `INSERT INTO auth_webauthn_sessions (token_hash,user_id,auth_epoch,purpose,session_data,expires_at) VALUES (?,?,?,?,?,?)`, digest(requestID), userID, authEpoch, purpose, string(raw), time.Now().UTC().Add(5*time.Minute))
 	return requestID, err
 }
 
-func (a *app) consumeWebauthnSession(ctx context.Context, purpose, requestID string) (uint64, webauthn.SessionData, error) {
+func (a *app) consumeWebauthnSession(ctx context.Context, purpose, requestID string) (uint64, uint64, webauthn.SessionData, error) {
 	var data webauthn.SessionData
 	tx, err := a.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, data, err
+		return 0, 0, data, err
 	}
 	defer tx.Rollback()
-	var userID uint64
+	var userID, authEpoch uint64
 	var raw string
 	var expires time.Time
-	err = tx.QueryRowContext(ctx, `SELECT user_id,session_data,expires_at FROM auth_webauthn_sessions WHERE token_hash=? AND purpose=? FOR UPDATE`, digest(requestID), purpose).Scan(&userID, &raw, &expires)
+	err = tx.QueryRowContext(ctx, `SELECT user_id,auth_epoch,session_data,expires_at FROM auth_webauthn_sessions WHERE token_hash=? AND purpose=? FOR UPDATE`, digest(requestID), purpose).Scan(&userID, &authEpoch, &raw, &expires)
 	if err != nil || !time.Now().UTC().Before(expires) {
-		return 0, data, errors.New("passkey request missing or expired")
+		return 0, 0, data, errors.New("passkey request missing or expired")
 	}
 	result, err := tx.ExecContext(ctx, `DELETE FROM auth_webauthn_sessions WHERE token_hash=? AND purpose=?`, digest(requestID), purpose)
 	if err != nil {
-		return 0, data, err
+		return 0, 0, data, err
 	}
 	count, err := result.RowsAffected()
 	if err != nil || count != 1 {
-		return 0, data, errors.New("passkey request already consumed")
+		return 0, 0, data, errors.New("passkey request already consumed")
 	}
 	if err := json.Unmarshal([]byte(raw), &data); err != nil {
-		return 0, data, err
+		return 0, 0, data, err
 	}
 	if err := tx.Commit(); err != nil {
-		return 0, data, err
+		return 0, 0, data, err
 	}
-	return userID, data, nil
+	return userID, authEpoch, data, nil
 }
 
 func (a *app) passkeyBegin(w http.ResponseWriter, r *http.Request) {
@@ -107,8 +111,10 @@ func (a *app) passkeyBegin(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 400, "invalid_request")
 		return
 	}
-	limited, err := a.rateLimited(r.Context(), "passkey:"+email)
-	if err != nil {
+	var id uint64
+	err := a.db.QueryRowContext(r.Context(), `SELECT id FROM users WHERE email=? AND is_deleted=0`, email).Scan(&id)
+	limited, limitErr := a.authAttemptLimited(r, id)
+	if limitErr != nil {
 		oauthError(w, 503, "temporarily_unavailable")
 		return
 	}
@@ -116,8 +122,7 @@ func (a *app) passkeyBegin(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 429, "rate_limited")
 		return
 	}
-	var id uint64
-	if err := a.db.QueryRowContext(r.Context(), `SELECT id FROM users WHERE email=? AND is_deleted=0`, email).Scan(&id); err != nil || a.blocked(r, id) {
+	if err != nil || a.blocked(r, id) {
 		oauthError(w, 401, "invalid_credentials")
 		return
 	}
@@ -126,7 +131,7 @@ func (a *app) passkeyBegin(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 401, "invalid_credentials")
 		return
 	}
-	assertion, data, err := a.webAuthn.BeginLogin(user)
+	assertion, data, err := a.webAuthn.BeginLogin(user, webauthn.WithUserVerification(protocol.VerificationRequired))
 	if err != nil {
 		oauthError(w, 500, "server_error")
 		return
@@ -152,8 +157,8 @@ func (a *app) passkeyFinish(w http.ResponseWriter, r *http.Request) {
 	if !parsePasskeyResponse(w, r, &input) {
 		return
 	}
-	id, data, err := a.consumeWebauthnSession(r.Context(), "login", input.RequestID)
-	if err != nil || a.blocked(r, id) {
+	id, authEpoch, data, err := a.consumeWebauthnSession(r.Context(), "login", input.RequestID)
+	if err != nil || data.UserVerification != protocol.VerificationRequired || a.blocked(r, id) {
 		oauthError(w, 401, "invalid_credentials")
 		return
 	}
@@ -165,6 +170,10 @@ func (a *app) passkeyFinish(w http.ResponseWriter, r *http.Request) {
 	request.Header.Set("Content-Type", "application/json")
 	parsed, err := protocol.ParseCredentialRequestResponse(request)
 	if err != nil {
+		oauthError(w, 401, "invalid_credentials")
+		return
+	}
+	if !parsed.Response.AuthenticatorData.Flags.HasUserVerified() {
 		oauthError(w, 401, "invalid_credentials")
 		return
 	}
@@ -209,5 +218,5 @@ func (a *app) passkeyFinish(w http.ResponseWriter, r *http.Request) {
 		a.alerts.send("Taskly auth passkey counter commit failed")
 		return
 	}
-	a.finishLogin(w, r, id, "passkey")
+	a.finishLoginWithProof(w, r, id, "passkey", loginProof{authEpoch: authEpoch, email: user.email, passkeyID: credentialID, passkeyData: stored})
 }
