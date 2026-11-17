@@ -39,3 +39,5 @@ The legacy login and auth login must never consume TOTP codes from separate
 database copies after ownership changes. Rollback therefore requires pausing
 writes, reconciling the active/encrypted row back to the legacy database, and
 verifying a real code before enabling the old TOTP path again.
+
+ログイン、追加確認、有効化、無効化は同じ利用者と TOTP シークレットのコード消費記録を共有する。並行した要求でも同じコードは一度だけ受け付ける。追加確認でコードを使った直後に無効化する場合は次のタイムステップのコードを待つ。新しいシークレットの有効化コードも消費されるため、同じコードで直後にログインできない。

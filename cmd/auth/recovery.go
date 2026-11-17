@@ -94,6 +94,10 @@ func (a *app) generateRecoveryCodes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if err := bumpAuthEpoch(r.Context(), tx, id); err != nil {
+		a.recoveryStorageError(w)
+		return
+	}
 	if err := tx.Commit(); err != nil {
 		a.recoveryStorageError(w)
 		return

@@ -31,6 +31,7 @@ type app struct {
 	securityStepUpRequired  bool
 	historyTrustedProxyPeer netip.Addr
 	geoDB                   *cityGeoDB
+	beforeSessionUserLock   func() // test hook for credential-change ordering
 }
 
 func env(key, fallback string) string {
@@ -140,6 +141,7 @@ func main() {
 		alerts.sendSync("Taskly auth startup failed: database schema unavailable")
 		log.Fatal("OAuth schema: ", err)
 	}
+	go a.runExpiryCleanup(context.Background())
 	api := http.NewServeMux()
 	api.HandleFunc("GET /healthz", a.health)
 	api.HandleFunc("GET /.well-known/oauth-authorization-server", a.metadata)

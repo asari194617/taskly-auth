@@ -86,7 +86,7 @@ func (a *app) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	queries := []string{
-		`UPDATE users SET hashed_password=? WHERE id=?`,
+		`UPDATE users SET hashed_password=?,auth_epoch=auth_epoch+1 WHERE id=?`,
 		`DELETE FROM auth_security_codes WHERE user_id=?`,
 		`DELETE FROM auth_sessions WHERE user_id=?`,
 		`UPDATE oauth_codes SET used_at=UTC_TIMESTAMP() WHERE user_id=? AND used_at IS NULL`,
@@ -111,7 +111,7 @@ func (a *app) changePassword(w http.ResponseWriter, r *http.Request) {
 		a.passwordStorageError(w)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: "taskly_auth_session", Value: "", Path: "/", MaxAge: -1, Secure: a.secure, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, &http.Cookie{Name: a.sessionCookieName(), Value: "", Path: "/", MaxAge: -1, Secure: a.secure, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	w.WriteHeader(http.StatusNoContent)
 }
 

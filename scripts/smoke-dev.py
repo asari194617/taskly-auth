@@ -118,6 +118,17 @@ def totp_code(secret):
     return f"{value % 1000000:06d}"
 
 
+def next_totp_code(secret, used_code):
+    """Wait for a new TOTP window so the smoke test never replays a code."""
+    deadline = time.monotonic() + 31
+    while time.monotonic() < deadline:
+        code = totp_code(secret)
+        if code != used_code:
+            return code
+        time.sleep(0.25)
+    raise AssertionError("next TOTP window did not arrive")
+
+
 verifier = secrets.token_urlsafe(32)
 challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
 state = secrets.token_urlsafe(32)
@@ -374,10 +385,11 @@ assert json.load(ui_json_request("/auth/totp/status"))["enabled"] is True
 response = ui_json_request("/auth/login", {"email": email, "password": password})
 assert response.status == 202, response.read()
 totp_challenge = json.load(response)["auth_challenge"]
+login_totp_code = next_totp_code(totp_setup["secret"], code)
 response = ui_json_request("/auth/login", {"email": email, "auth_challenge": totp_challenge,
-                                           "totp": totp_code(totp_setup["secret"])})
+                                           "totp": login_totp_code})
 assert response.status == 200, response.read()
-response = ui_json_request("/auth/totp/disable", {"code": totp_code(totp_setup["secret"])})
+response = ui_json_request("/auth/totp/disable", {"code": next_totp_code(totp_setup["secret"], login_totp_code)})
 assert response.status == 204, response.read()
 assert json.load(ui_json_request("/auth/totp/status"))["enabled"] is False
 

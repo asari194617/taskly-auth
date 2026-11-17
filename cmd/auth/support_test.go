@@ -74,3 +74,20 @@ func TestProductionMigrationGate(t *testing.T) {
 		}
 	}
 }
+
+func TestProductionSessionCookieDoesNotSelectLegacyParentCookie(t *testing.T) {
+	production := &app{secure: true}
+	local := &app{secure: false}
+	if production.sessionCookieName() != "__Host-taskly_auth_session" || local.sessionCookieName() != "taskly_auth_session" {
+		t.Fatal("unexpected session cookie names")
+	}
+	r := httptest.NewRequest(http.MethodGet, "/oauth/authorize", nil)
+	r.Header.Set("Cookie", "taskly_auth_session=parent-domain; __Host-taskly_auth_session=host-only")
+	cookie, err := r.Cookie(production.sessionCookieName())
+	if err != nil || cookie.Value != "host-only" {
+		t.Fatalf("production chose the wrong cookie: %v, %v", cookie, err)
+	}
+	if _, err := httptest.NewRequest(http.MethodGet, "/oauth/authorize", nil).Cookie(production.sessionCookieName()); err == nil {
+		t.Fatal("production accepted a missing host-only cookie")
+	}
+}

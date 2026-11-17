@@ -10,7 +10,7 @@ Status: implemented behind migration gate; existing-passkey device login verifie
 
 ## 操作と認可
 
-- 管理画面は認証設定内の `GET /security?section=passkeys`。既存の `GET /passkeys` とログインフローの `next=passkeys` はこの画面へ転送する。認証 API の有効な `taskly_auth_session` がなければ、管理画面からログインし直す。任意 URL への遷移は許可しない。
+- 管理画面は認証設定内の `GET /security?section=passkeys`。既存の `GET /passkeys` とログインフローの `next=passkeys` はこの画面へ転送する。認証 API の有効なセッション Cookie がなければ、管理画面からログインし直す。任意 URL への遷移は許可しない。
 - `GET /auth/passkeys` はログイン済みの本人の ID・表示名・作成日時だけを返す。公開鍵・署名カウンタは返さない。
 - `POST /auth/passkey/register/begin` は本人の既存クレデンシャルを exclude list に含む登録オプションと5分の一回限りの要求 ID を返す。
 - `POST /auth/passkey/register/finish` は要求 ID とブラウザの attestation を検証し、同一ユーザーの新規行として保存する。要求 ID は成功・失敗を問わず一度だけ使える。
@@ -29,3 +29,5 @@ Safari へ渡すリンクは Taskly の `/login` に固定する。アプリ内�
 実端末で Google アプリ内の案内とリンクコピー、Safari での新しいログイン、Google アプリ内のパスワード・メールコードと必要な2段階認証を確認する。ブラウザの User-Agent や WebAuthn 応答を置き換えた自動テストは、実機でのパスキー認証成功を保証しない。
 
 パスキー登録の署名・origin・RP ID・チャレンジ不一致は登録を拒否する。DB 保存エラーは Discord に通知し、ユーザーに公開鍵や秘密情報を返さない。既存パスキーの認証・登録は開発環境の CI と内部ステージングで確認する。2026-09-25 に隔離 DB の既存パスキーで新 origin からの実端末ログインを確認した（[検証記録](production-migration.md)）。新規登録・管理の実端末検証と、旧 Taskly 設定画面から新管理画面への導線は公開切り替え前に確認する。旧 API のパスキー登録・名前変更・削除・署名カウンタ更新を停止または auth DB 側へ移管するまで、本番の認証データはコピーせず公開503を維持する。
+
+単独ログインのパスキー要求は `userVerification: required` を指定し、サーバーでも保存した要求の UV 設定と認証器の UV フラグを確認する。UV に対応しない既存認証器は単独ログインに使えないため、パスワード、メールコード、対応する別のパスキーを案内する。登録済みパスキーの可否は実端末で確認する。

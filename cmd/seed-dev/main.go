@@ -26,7 +26,7 @@ func main() {
 		log.Fatal(err)
 	}
 	defer db.Close()
-	_, err = db.Exec(`INSERT INTO users (email,display_name,hashed_password,email_code_allowed,is_registered) VALUES (?,?,?,0,1) ON DUPLICATE KEY UPDATE hashed_password=VALUES(hashed_password),email_code_allowed=0`, email, "Development User", string(hash))
+	_, err = db.Exec(`INSERT INTO users (email,display_name,hashed_password,email_code_allowed,is_registered) VALUES (?,?,?,0,1) ON DUPLICATE KEY UPDATE hashed_password=VALUES(hashed_password),email_code_allowed=0,auth_epoch=auth_epoch+1`, email, "Development User", string(hash))
 	if err != nil {
 		log.Fatal(err)
 	}

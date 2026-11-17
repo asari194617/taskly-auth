@@ -147,7 +147,7 @@ func (a *app) applyUserUpdate(ctx context.Context, userID uint64, input updateUs
 	if input.EmailCodeAllowed != nil {
 		emailAllowed = *input.EmailCodeAllowed
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE users SET email=?,display_name=?,notification_lang=?,email_code_allowed=? WHERE id=?`, email, displayName, lang, emailAllowed, userID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET email=?,display_name=?,notification_lang=?,email_code_allowed=?,auth_epoch=auth_epoch+1 WHERE id=?`, email, displayName, lang, emailAllowed, userID); err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 			return errEmailConflict
 		}

@@ -117,7 +117,7 @@ func (a *app) passkeyRegisterFinish(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 400, "invalid_request")
 		return
 	}
-	requestUserID, data, err := a.consumeWebauthnSession(r.Context(), "register", input.RequestID)
+	requestUserID, requestEpoch, data, err := a.consumeWebauthnSession(r.Context(), "register", input.RequestID)
 	if err != nil || requestUserID != id {
 		oauthError(w, 401, "invalid_credentials")
 		return
@@ -139,6 +139,11 @@ func (a *app) passkeyRegisterFinish(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 401, "invalid_credentials")
 		return
 	}
+	var currentEpoch uint64
+	if err := tx.QueryRowContext(r.Context(), `SELECT auth_epoch FROM users WHERE id=?`, id).Scan(&currentEpoch); err != nil || currentEpoch != requestEpoch {
+		oauthError(w, 401, "invalid_credentials")
+		return
+	}
 	if !a.securitySettingsGrantInTx(w, r, tx, id) {
 		return
 	}
@@ -153,6 +158,9 @@ func (a *app) passkeyRegisterFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, err = tx.ExecContext(r.Context(), `INSERT INTO passkeys (user_id,credential_id,public_key,sign_count,device_name) VALUES (?,?,?,?,?)`, id, base64.RawStdEncoding.EncodeToString(credential.ID), stored, credential.Authenticator.SignCount, name)
+	if err == nil {
+		err = bumpAuthEpoch(r.Context(), tx, id)
+	}
 	if err != nil || tx.Commit() != nil {
 		oauthError(w, 503, "temporarily_unavailable")
 		a.alerts.send("Taskly auth passkey registration storage failed")
@@ -279,7 +287,11 @@ func (a *app) passkeyDelete(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 409, "last_login_method")
 		return
 	}
-	if _, err := tx.ExecContext(r.Context(), `DELETE FROM passkeys WHERE id=? AND user_id=?`, input.ID, id); err != nil || tx.Commit() != nil {
+	_, err = tx.ExecContext(r.Context(), `DELETE FROM passkeys WHERE id=? AND user_id=?`, input.ID, id)
+	if err == nil {
+		err = bumpAuthEpoch(r.Context(), tx, id)
+	}
+	if err != nil || tx.Commit() != nil {
 		oauthError(w, 503, "temporarily_unavailable")
 		a.alerts.send("Taskly auth passkey deletion failed")
 		return

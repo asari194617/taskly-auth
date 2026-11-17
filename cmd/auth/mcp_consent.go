@@ -48,6 +48,9 @@ func (a *app) authorizeMCP(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 500, "server_error")
 		return
 	}
+	if !a.allowAuthorizationRequest(w, r) {
+		return
+	}
 	_, err = a.db.ExecContext(r.Context(), `INSERT INTO oauth_authorization_requests (id_hash,client_id,redirect_uri,state_value,code_challenge,scope_value,resource_uri,expires_at) VALUES (?,?,?,?,?,?,?,?)`, digest(id), mcpPublicClientID, a.mcp.redirectURI, q.Get("state"), q.Get("code_challenge"), scope, a.mcp.resource, time.Now().UTC().Add(10*time.Minute))
 	if err != nil {
 		oauthError(w, 500, "server_error")

@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
-	"github.com/pquerna/otp/totp"
 )
 
 const securityGrantLifetime = 5 * time.Minute
@@ -46,7 +45,7 @@ func (a *app) securitySession(w http.ResponseWriter, r *http.Request) (uint64, s
 		oauthError(w, http.StatusUnauthorized, "login_required")
 		return 0, "", false
 	}
-	cookie, err := r.Cookie("taskly_auth_session")
+	cookie, err := r.Cookie(a.sessionCookieName())
 	if err != nil {
 		oauthError(w, http.StatusUnauthorized, "login_required")
 		return 0, "", false
@@ -89,7 +88,7 @@ func (a *app) securitySettingsGrantInTx(w http.ResponseWriter, r *http.Request, 
 	if !a.securityStepUpRequired {
 		return true
 	}
-	cookie, err := r.Cookie("taskly_auth_session")
+	cookie, err := r.Cookie(a.sessionCookieName())
 	if err != nil || cookie.Value == "" {
 		oauthError(w, http.StatusUnauthorized, "login_required")
 		return false
@@ -283,30 +282,12 @@ func (a *app) verifySecurityStepUp(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "totp":
-		if !validTOTPCode(input.Code) {
-			oauthError(w, http.StatusUnauthorized, "invalid_code")
-			return
-		}
-		secret, err := decryptTOTP(encrypted.String, osEnv("TOTP_ENC_KEY"))
-		if err != nil {
-			oauthError(w, http.StatusServiceUnavailable, "temporarily_unavailable")
-			return
-		}
-		if !totp.Validate(input.Code, secret) {
-			oauthError(w, http.StatusUnauthorized, "invalid_code")
-			return
-		}
-		if _, err := tx.ExecContext(r.Context(), `DELETE FROM auth_security_totp_uses WHERE expires_at<UTC_TIMESTAMP()`); err != nil {
-			oauthError(w, http.StatusServiceUnavailable, "temporarily_unavailable")
-			return
-		}
-		_, err = tx.ExecContext(r.Context(), `INSERT INTO auth_security_totp_uses (user_id,code_hash,expires_at) VALUES (?,?,?)`, id, a.securityCodeDigest("totp", id, "", "", input.Code), time.Now().UTC().Add(2*time.Minute))
-		if err != nil {
+		if err := a.consumeTOTPInTx(r.Context(), tx, id, encrypted.String, input.Code); err != nil {
 			var mysqlError *mysql.MySQLError
 			if errors.As(err, &mysqlError) && mysqlError.Number == 1062 {
 				oauthError(w, http.StatusUnauthorized, "invalid_code")
 			} else {
-				oauthError(w, http.StatusServiceUnavailable, "temporarily_unavailable")
+				oauthError(w, http.StatusUnauthorized, "invalid_code")
 			}
 			return
 		}

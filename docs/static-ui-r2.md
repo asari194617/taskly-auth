@@ -106,6 +106,8 @@ Repository environment `production-ui` に次を登録する。
 
 `deploy-ui-r2.yml` は `main` への UI 関連変更の push と手動実行で、次の順に処理する。
 
+`production-ui` environment のデプロイブランチは `main` のみ許可する。ワークフローの deploy job も `refs/heads/main` 以外では実行しない。`main` は PR、`test`・`ui`・`oauth-smoke`・`mcp-oauth-integration` の成功を必須にし、管理者にも適用する。通常の更新は PR のマージ後に自動デプロイされる。ロールバックは直前の安定版を `main` に revert した PR を同じチェックで通してマージする。任意ブランチからの手動実行では environment secret を使えない。
+
 1. lockfile を使って依存を再現する。
 2. UI の test と build を実行する。
 3. S3 互換 endpoint `https://<ACCOUNT_ID>.r2.cloudflarestorage.com` に成果物を upload する。
@@ -158,4 +160,4 @@ UI の配信先変更は認証 DB のコピーや切り替えを実行しない�
 
 ## ロールバック
 
-UI だけに問題がある場合は、Actions の手動実行で正常だった commit を checkout して同じ bucket へ再デプロイする。API または認証データに問題がある場合は API の 503 ゲートを戻し、Taskly の OAuth リンクを無効にして旧ログインを維持する。R2 bucket や旧 DB のデータを削除しない。
+UI だけに問題がある場合は、正常だった版への revert PR を `main` にマージして同じ bucket へ再デプロイする。API または認証データに問題がある場合は API の 503 ゲートを戻し、Taskly の OAuth リンクを無効にして旧ログインを維持する。R2 bucket や旧 DB のデータを削除しない。

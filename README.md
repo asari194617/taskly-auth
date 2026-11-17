@@ -32,7 +32,7 @@ cp .env.example .env
 
 `.env` の `OAUTH_CLIENT_SECRET`、`AUTH_INTERNAL_TOKEN`、`TOTP_ENC_KEY` を開発専用の値へ変更します。内部 token は OAuth client secret と別の値を使います。移行済みデータを扱う環境では、TOTP 鍵を作り直さず既存の鍵を維持します。
 
-単独で開発する場合、`TASKLY_PROFILE_SYNC_URL=` を空にして Taskly へのプロフィール同期を無効にします。同期も検証する場合は、到達可能な Taskly API の URL と両サービスで一致する `AUTH_INTERNAL_TOKEN` を設定してください。メール送信には SMTP 設定と Taskly の `email-compose` サービスが別途必要です。詳細は[認証メール](docs/email-compose.md)を参照してください。
+単独で開発する場合、`TASKLY_PROFILE_SYNC_URL=` を空にして Taskly へのプロフィール同期を無効にします。同期も検証する場合は、到達可能な Taskly API の URL と両サービスで一致する `AUTH_INTERNAL_TOKEN` を設定してください。メール送信には SMTP 設定が必要です。詳細は[認証メール](docs/email-compose.md)を参照してください。
 
 ```sh
 docker compose up -d --build --wait
