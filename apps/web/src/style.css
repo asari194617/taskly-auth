@@ -54,6 +54,7 @@ body:not([data-charcoal]) .secondary-button { color: var(--charcoal-color-text-d
 .passkey-browser-help p:empty { display: none; }
 .passkey-login-link { overflow-wrap: anywhere; }
 .account-email { margin-bottom: 0; font-weight: 600; overflow-wrap: anywhere; }
+.login-email-domain { padding-inline-start: 8px; border-inline-start: 1px solid var(--charcoal-color-border-secondary); white-space: nowrap; }
 .back-link, #restart { font-size: 14px; line-height: 22px; }
 .footer-note, .alternative-actions a { font-size: 12px; line-height: 20px; }
 .back-link, .footer-note a, .alternative-actions a, #restart { color: var(--charcoal-color-text-secondary-default); }

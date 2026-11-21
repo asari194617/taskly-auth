@@ -5,17 +5,19 @@ import test from "node:test";
 
 const source = await readFile(new URL("../src/login-flow.ts", import.meta.url), "utf8");
 const compiled = stripTypeScriptTypes(source, { mode: "strip" });
-const { startFlow, loadFlow, saveFlow, clearFlow, normalizeLoginEmail, securityDetailSection, securityDetailURL, securityLoginURL, securityMfaURL } = await import(`data:text/javascript,${encodeURIComponent(compiled)}`);
+const { startFlow, loadFlow, saveFlow, clearFlow, normalizeLoginEmail, schoolEmailLocalPart, securityDetailSection, securityDetailURL, securityLoginURL, securityMfaURL } = await import(`data:text/javascript,${encodeURIComponent(compiled)}`);
 const storage = () => {
   const values = new Map();
   return { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: (key) => values.delete(key) };
 };
 const requestID = "a".repeat(43);
 
-test("login completes school email shorthand and preserves explicitly entered domains", () => {
+test("login accepts the local part or a full address at the school domain", () => {
   assert.equal(normalizeLoginEmail(" Student01 "), "student01@nagaoka-ct.ac.jp");
-  assert.equal(normalizeLoginEmail("Student+Tag@Example.COM"), "student+tag@example.com");
-  for (const invalid of ["", "   ", "first last", "user@", "user@@example.com", "user@example..com"]) {
+  assert.equal(normalizeLoginEmail("Student+Tag@NAGAOKA-CT.AC.JP"), "student+tag@nagaoka-ct.ac.jp");
+  assert.equal(schoolEmailLocalPart(" Student01@NAGAOKA-CT.AC.JP "), "Student01");
+  assert.equal(schoolEmailLocalPart("student@example.org"), "student@example.org");
+  for (const invalid of ["", "   ", "@nagaoka-ct.ac.jp", "first last", "user@", "user@example.com", "user@nagaoka-ct.ac.jp.example.com", "user@@nagaoka-ct.ac.jp"]) {
     assert.equal(normalizeLoginEmail(invalid), null);
   }
 });
