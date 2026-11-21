@@ -8,6 +8,15 @@ export interface LoginFlow {
 
 const key = "taskly-auth-login-flow";
 const requestIDPattern = /^[A-Za-z0-9._~-]{43,128}$/;
+export const schoolEmailDomain = "nagaoka-ct.ac.jp";
+const emailPattern = /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/i;
+
+export function normalizeLoginEmail(value: string): string | null {
+  const input = value.trim().toLowerCase();
+  const email = input.includes("@") ? input : `${input}@${schoolEmailDomain}`;
+  return emailPattern.test(email) ? email : null;
+}
+
 export const securityDetailSections = ["email", "totp", "recovery", "password", "passkeys"] as const;
 export type SecurityDetailSection = typeof securityDetailSections[number];
 
