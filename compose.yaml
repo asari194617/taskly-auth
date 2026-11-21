@@ -37,7 +37,7 @@ services:
   ui:
     build: ./apps/web
     environment:
-      VITE_AUTH_API_URL: http://localhost:3067
+      VITE_AUTH_API_URL: ${VITE_AUTH_API_URL:-http://localhost:3067}
     ports:
       - "127.0.0.1:3068:3068"
     healthcheck:

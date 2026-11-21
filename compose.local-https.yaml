@@ -1,0 +1,10 @@
+services:
+  auth:
+    networks:
+      default:
+      local-https:
+        aliases: [taskly-dev-auth]
+networks:
+  local-https:
+    name: taskly-local-https
+    external: true

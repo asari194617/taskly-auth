@@ -22,9 +22,38 @@ Taskly の独立した認証サービスです。認証 UI、認証 API、OAuth 
 
 ## 開発環境
 
-必要なものは Docker Compose、Go（バージョンは `go.mod`）、Node.js 22.12 以上、npm、Python 3 です。以下はリポジトリのルートで実行します。
+必要なものは Docker Compose、Go（バージョンは `go.mod`）、Node.js 26.13.1、npm、Python 3 です。以下はリポジトリのルートで実行します。
+
+### ローカル HTTPS
+
+[Taskly 共通の HTTPS 手順](https://github.com/asari194617/taskly/blob/main/docs/local-development.md#local-https) で `/etc/hosts`、開発 CA、Caddy をセットアップします。下記「設定と起動」のとおり `.env` と開発専用の秘密値を用意し、対応する値を変更します。
+
+```dotenv
+AUTH_ISSUER=https://local.taskly-auth-api.iy0306.com
+AUTH_UI_URL=https://local.auth.taskly.iy0306.com
+WEBAUTHN_RP_ID=local.auth.taskly.iy0306.com
+VITE_AUTH_API_URL=https://local.taskly-auth-api.iy0306.com
+OAUTH_REDIRECT_URI=https://local.api.taskly.iy0306.com/auth/oauth/callback
+```
+
+Taskly API とプロフィール同期を検証する場合は `TASKLY_PROFILE_SYNC_URL=http://taskly-dev-api:8080` を指定し、両サービスの内部 token を揃えます。企業ガイダンスと連携する場合は、`OAUTH_PUBLIC_CLIENTS_JSON` の配列に次の登録を追加するか、同じ client ID の登録を更新します。
+
+```json
+{"client_id":"nnct-corp-guidance-2026","redirect_uri":"https://local.api.nnct-corp-guidance-2026.taskly.iy0306.com/auth/callback"}
+```
+
+```sh
+docker network inspect taskly-local-https >/dev/null 2>&1 ||
+  docker network create --internal taskly-local-https
+docker compose -f compose.yaml -f compose.local-https.yaml up -d --build --wait
+curl -fsS https://local.taskly-auth-api.iy0306.com/healthz
+```
+
+[Taskly のログイン画面](https://local.taskly.iy0306.com/login)または企業ガイダンスのログインボタンから認証を開始します。設定を変えた場合や停止する場合も両方の Compose ファイルを指定します。UI をホストの Vite で起動するなら、Compose の `ui` サービスを停止し、`apps/web/.env` に同じ `VITE_AUTH_API_URL` を設定してから `npm --prefix apps/web run dev -- --host 127.0.0.1` を実行します。
 
 ### 1. 設定と起動
+
+以下の localhost の URL はループバック HTTP を使う場合の設定です。HTTPS の場合は上記の URL と Compose ファイルを使います。
 
 ```sh
 cp .env.example .env
@@ -50,12 +79,12 @@ Compose は `.env` をコンテナへ渡します。ホスト上の `go run` や
 
 ```sh
 AUTH_DSN='auth:auth_dev_password@tcp(127.0.0.1:3307)/taskly_auth?parseTime=true&charset=utf8mb4&loc=UTC' \
-AUTH_DEV_EMAIL='dev@example.test' \
+AUTH_DEV_EMAIL='taskly-local-demo@nagaoka-ct.ac.jp' \
 AUTH_DEV_PASSWORD='<development-password>' \
 go run ./cmd/seed-dev
 ```
 
-DB パスワードを変更した場合は DSN も合わせます。`seed-dev` は同じメールのユーザーが存在するとパスワードを上書きし、メールコードを無効にします。`NODE_ENV=production` では実行できません。
+ログイン画面では、メールアドレスの `@nagaoka-ct.ac.jp` より前にある部分を入力します。DB パスワードを変更した場合は DSN も合わせます。`seed-dev` は同じメールのユーザーが存在するとパスワードを上書きし、メールコードを無効にします。`NODE_ENV=production` では実行できません。
 
 ### 3. Taskly と OAuth で接続する
 
@@ -88,7 +117,7 @@ npm --prefix apps/web test
 npm --prefix apps/web run build
 ```
 
-MySQL を使うスモークテストは起動済みの開発環境で実行します。`.env` の値に合わせて変数を渡してください。
+MySQL を使うスモークテストは起動済みの開発環境で実行します。HTTPS を使う場合は上記の `AUTH_ISSUER`、`AUTH_UI_URL`、`OAUTH_REDIRECT_URI` と CA の PEM ファイル（`SSL_CERT_FILE`）をコマンド環境に渡してください。`.env` の値に合わせて変数を渡してください。
 
 ```sh
 OAUTH_CLIENT_SECRET='<development-client-secret>' \
