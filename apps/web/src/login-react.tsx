@@ -10,7 +10,7 @@ import { apiBase } from "./config";
 import { decodeBase64url, encodeBase64url } from "./dom";
 import { LocaleRoot, tr, useLocale } from "./i18n";
 import { BusyLabel, LoadingStatus } from "./loading";
-import { clearFlow, loadFlow, saveFlow, securityDetailSection, securityDetailURL, securityLoginURL, startFlow, type LoginFlow, type SecurityDetailSection } from "./login-flow";
+import { clearFlow, loadFlow, normalizeLoginEmail, saveFlow, schoolEmailDomain, securityDetailSection, securityDetailURL, securityLoginURL, startFlow, type LoginFlow, type SecurityDetailSection } from "./login-flow";
 import type { StepUpMethod, StepUpStatus } from "./security-step-up";
 import { isIOSGoogleApp, passkeySupport, type PasskeySupport } from "./passkey-support";
 import { PasskeyBrowserHelp } from "./passkey-browser-help";
@@ -108,7 +108,13 @@ function LoginApp() {
     setError(""); setNotice(""); setBusyAction("submit");
     try {
       if (step === "email") {
-        flow.email = email.trim().toLowerCase();
+        const submittedEmail = new FormData(event.currentTarget).get("email");
+        const normalizedEmail = normalizeLoginEmail(typeof submittedEmail === "string" ? submittedEmail : email);
+        if (!normalizedEmail) {
+          setError(tr("メールアドレスの形式を確認してください。", "Enter a valid email address."));
+          return;
+        }
+        flow.email = normalizedEmail;
         flow.challenge = "";
         saveFlow(flow, sessionStorage);
         location.assign("/password");
@@ -197,7 +203,7 @@ function LoginApp() {
     <MfaFeedback error={displayedError} notice={notice} />
     {restart && <a id="restart" href="/password">{tr("パスワード入力に戻る", "Return to password entry")}</a>}
     {!invalid && !restart && <form id="form" onSubmit={submit} aria-busy={busy}>
-      {step === "email" && <TextField id="email" type="email" label={tr("メールアドレス", "Email address")} showLabel required autoComplete="username" value={email} onChange={setEmail} autoFocus />}
+      {step === "email" && <TextField id="email" name="email" inputMode="email" autoCapitalize="none" spellCheck={false} label={tr("メールアドレス", "Email address")} assistiveText={tr(`@${schoolEmailDomain} のアドレスは、@の前だけで入力できます。`, `For @${schoolEmailDomain} addresses, you can enter just the part before @.`)} invalid={Boolean(error)} showLabel required autoComplete="username" value={email} onChange={(value) => { setEmail(value); setError(""); }} autoFocus />}
       {step === "password" && <TextField id="password" type="password" label={tr("パスワード", "Password")} showLabel required autoComplete="current-password" value={password} onChange={setPassword} autoFocus />}
       {step === "mail-code" && <TextField id="code" label={tr("メールコード", "Email code")} showLabel required inputMode="numeric" pattern="[0-9]{6}" autoComplete="one-time-code" value={factor} onChange={setFactor} autoFocus />}
       {step === "mfa" && <><MfaMethodSelector method={method} methods={["totp", "code", "recovery"]} onChange={(value) => { setMethod(value as typeof method); setFactor(""); }} />
