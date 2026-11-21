@@ -22,7 +22,7 @@ Taskly の独立した認証サービスです。認証 UI、認証 API、OAuth 
 
 ## 開発環境
 
-必要なものは Docker Compose、Go（バージョンは `go.mod`）、Node.js 22.12 以上、npm、Python 3 です。以下はリポジトリのルートで実行します。
+必要なものは Docker Compose、Go（バージョンは `go.mod`）、Node.js 26.13.1、npm、Python 3 です。以下はリポジトリのルートで実行します。
 
 ### ローカル HTTPS
 
@@ -36,7 +36,7 @@ VITE_AUTH_API_URL=https://local.taskly-auth-api.iy0306.com
 OAUTH_REDIRECT_URI=https://local.api.taskly.iy0306.com/auth/oauth/callback
 ```
 
-Taskly API とプロフィール同期を検証する場合は `TASKLY_PROFILE_SYNC_URL=http://taskly-dev-api:8080` を指定し、両サービスの内部 token を揃えます。企業ガイダンスと連携する場合は、既存の `OAUTH_PUBLIC_CLIENTS_JSON` の配列に次の登録を追加します。
+Taskly API とプロフィール同期を検証する場合は `TASKLY_PROFILE_SYNC_URL=http://taskly-dev-api:8080` を指定し、両サービスの内部 token を揃えます。企業ガイダンスと連携する場合は、`OAUTH_PUBLIC_CLIENTS_JSON` の配列に次の登録を追加するか、同じ client ID の登録を更新します。
 
 ```json
 {"client_id":"nnct-corp-guidance-2026","redirect_uri":"https://local.api.nnct-corp-guidance-2026.taskly.iy0306.com/auth/callback"}
@@ -49,7 +49,7 @@ docker compose -f compose.yaml -f compose.local-https.yaml up -d --build --wait
 curl -fsS https://local.taskly-auth-api.iy0306.com/healthz
 ```
 
-[認証画面](https://local.auth.taskly.iy0306.com/login)を開きます。設定を変えた場合や停止する場合も両方の Compose ファイルを指定します。UI をホストの Vite で起動するなら `apps/web/.env` に同じ `VITE_AUTH_API_URL` を設定し、`npm --prefix apps/web run dev -- --host 127.0.0.1` を使用します。
+[Taskly のログイン画面](https://local.taskly.iy0306.com/login)または企業ガイダンスのログインボタンから認証を開始します。設定を変えた場合や停止する場合も両方の Compose ファイルを指定します。UI をホストの Vite で起動するなら、Compose の `ui` サービスを停止し、`apps/web/.env` に同じ `VITE_AUTH_API_URL` を設定してから `npm --prefix apps/web run dev -- --host 127.0.0.1` を実行します。
 
 ### 1. 設定と起動
 
