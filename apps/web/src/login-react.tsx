@@ -111,7 +111,7 @@ function LoginApp() {
         const submittedEmail = new FormData(event.currentTarget).get("email");
         const normalizedEmail = normalizeLoginEmail(typeof submittedEmail === "string" ? submittedEmail : email);
         if (!normalizedEmail) {
-          setError(tr("長岡高専のメールアドレスの @ より前を入力してください。", "Enter the part before @ in your Nagaoka College email address."));
+          setError(tr("学校のメールアドレスを確認してください。", "Check your school email address."));
           return;
         }
         flow.email = normalizedEmail;
@@ -196,7 +196,7 @@ function LoginApp() {
   return <CharcoalProvider><main>
     <AuthHeader />
     <p className="eyebrow">{progress}</p><h1>{title}</h1>
-    {step === "email" && <p>{tr("Taskly のアカウントで続行します。", "Continue with your Taskly account.")}</p>}
+    {step === "email" && <p>{tr("学校のメールアドレスで続行します。", "Continue with your school email address.")}</p>}
     {step === "password" && <><p id="email-display" className="account-email">{flow?.email}</p><a className="back-link" href="/login">{tr("メールアドレスを変更", "Change email address")}</a></>}
     {step === "mail-code" && <p>{tr("送信した6桁のコードを入力してください。", "Enter the six-digit code we sent.")}</p>}
     {step === "mfa" && <p>{tr("設定済みの方法で本人確認を行います。", "Verify your identity using a method you have set up.")}</p>}
@@ -206,7 +206,7 @@ function LoginApp() {
       {step === "email" && <TextField
         id="email"
         name="email"
-        label={tr("メールアドレスの @ より前", "Email address before @")}
+        label={tr("メールアドレス", "Email address")}
         suffix={<span id="login-email-domain" className="login-email-domain">{schoolEmailSuffix}</span>}
         aria-describedby="login-email-domain"
         inputMode="email"
