@@ -3,7 +3,7 @@ module github.com/asari194617/taskly-auth
 go 1.27.4
 
 require (
-	github.com/go-sql-driver/mysql v1.10.1
+	github.com/go-sql-driver/mysql v1.10.2
 	github.com/go-webauthn/webauthn v0.18.2
 	github.com/maxmind/mmdbwriter v1.2.0
 	github.com/oschwald/maxminddb-golang/v2 v2.9.1
