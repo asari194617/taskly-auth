@@ -104,7 +104,13 @@ jobs:
               }
             } catch { core.warning('Coverage report unavailable'); return; }
             const marker = '<!-- taskly-auth-mcp-coverage -->';
-            const body = `${marker}\n### OAuth test coverage\n\n| Scope | Statements |\n| --- | ---: |\n| New MCP OAuth | ${result.mcp.toFixed(1)}% |\n| Complete Go module | ${result.overall.toFixed(1)}% |\n\nNew MCP OAuth requires 80%. Includes unit tests and real MySQL consent, PKCE, refresh, token exchange, and revocation tests.\n\nCommit: ${source.head.sha.slice(0, 7)}`;
+            const body = [marker, '### OAuth のテストカバレッジ', '',
+              '| 計測範囲 | ステートメントカバレッジ |', '| --- | ---: |',
+              `| 新規の MCP OAuth | ${result.mcp.toFixed(1)}% |`,
+              `| Go モジュール全体 | ${result.overall.toFixed(1)}% |`, '',
+              '新規の MCP OAuth には最低 80% のカバレッジが必要です。単体テストに加え、実 MySQL を使った同意、PKCE、トークンの更新・交換・失効のテストを含みます。',
+              '', `コミット ${source.head.sha.slice(0, 7)} の計測結果です。`,
+            ].join('\n');
             const comments = await github.paginate(github.rest.issues.listComments, {owner, repo, issue_number: source.number, per_page: 100});
             const previous = comments.find(comment => comment.user?.type === 'Bot' && comment.body?.includes(marker));
             if (previous) await github.rest.issues.updateComment({owner, repo, comment_id: previous.id, body});
